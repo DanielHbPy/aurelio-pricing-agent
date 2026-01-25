@@ -1369,8 +1369,8 @@ async function sendEmailReport(analysis, todayPrices) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          from: 'Aurelio HidroBio <onboarding@resend.dev>',
-          to: ['daniel@hidrobio.com.py'],
+          from: process.env.EMAIL_FROM || 'Aurelio HidroBio <onboarding@resend.dev>',
+          to: [process.env.EMAIL_TO || 'daniel.stanca@mail.com'],
           subject: subject,
           html: htmlContent
         })
