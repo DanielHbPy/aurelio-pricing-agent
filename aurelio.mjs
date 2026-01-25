@@ -17,6 +17,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import * as cheerio from 'cheerio';
 import fetch from 'node-fetch';
 import Database from 'better-sqlite3';
+import nodemailer from 'nodemailer';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, mkdirSync, readFileSync } from 'fs';
@@ -1350,14 +1351,40 @@ async function sendEmailReport(analysis, todayPrices) {
   console.log(`  Generado por Aurelio | ${new Date().toISOString()}`);
   console.log('═'.repeat(80) + '\n');
 
-  // TODO: Send actual email using nodemailer when SMTP credentials are available
+  // Send actual email using nodemailer with Zoho SMTP
   const smtpUser = process.env.SMTP_USER;
   const smtpPassword = process.env.SMTP_PASSWORD;
 
   if (smtpUser && smtpPassword) {
-    console.log('[Aurelio] 📧 Enviando email a daniel@hidrobio.com.py...');
-    // Email sending would go here with nodemailer
-    console.log('[Aurelio] ✅ Email enviado');
+    try {
+      console.log('[Aurelio] 📧 Enviando email a daniel@hidrobio.com.py...');
+
+      // Create Zoho Mail transporter
+      const transporter = nodemailer.createTransport({
+        host: 'smtp.zoho.com',
+        port: 587,
+        secure: false, // TLS
+        auth: {
+          user: smtpUser,
+          pass: smtpPassword
+        }
+      });
+
+      // Generate HTML content
+      const htmlContent = generateEmailHtml(analysis, todayPrices, date);
+
+      // Send email
+      const info = await transporter.sendMail({
+        from: `"Aurelio - HidroBio" <${smtpUser}>`,
+        to: 'daniel@hidrobio.com.py',
+        subject: subject,
+        html: htmlContent
+      });
+
+      console.log(`[Aurelio] ✅ Email enviado: ${info.messageId}`);
+    } catch (error) {
+      console.error('[Aurelio] ❌ Error enviando email:', error.message);
+    }
   } else {
     console.log('[Aurelio] ℹ️ Email no configurado (ver SMTP_USER, SMTP_PASSWORD)');
   }
@@ -1376,63 +1403,230 @@ function formatPriceWithMargin(obj) {
 }
 
 function generateEmailHtml(analysis, todayPrices, date) {
-  // Generate HTML email (simplified for logging)
+  // Group prices by supermarket for the raw prices table
+  const pricesBySupermarket = {};
+  const pricesByProduct = {};
+
+  if (todayPrices && todayPrices.length > 0) {
+    for (const p of todayPrices) {
+      // By supermarket
+      if (!pricesBySupermarket[p.supermarket]) {
+        pricesBySupermarket[p.supermarket] = [];
+      }
+      pricesBySupermarket[p.supermarket].push(p);
+
+      // By product
+      if (!pricesByProduct[p.product]) {
+        pricesByProduct[p.product] = [];
+      }
+      pricesByProduct[p.product].push(p);
+    }
+  }
+
+  // Generate raw prices section
+  const rawPricesHtml = Object.entries(pricesBySupermarket).map(([supermarket, prices]) => `
+    <div style="margin-bottom: 20px;">
+      <h4 style="color: #1565C0; margin-bottom: 10px;">🏪 ${supermarket}</h4>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <tr style="background: #E3F2FD;">
+          <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Producto</th>
+          <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Precio (Gs.)</th>
+          <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">Unidad</th>
+        </tr>
+        ${prices.map(p => `
+        <tr>
+          <td style="padding: 8px; border: 1px solid #ddd;">${p.name}</td>
+          <td style="padding: 8px; border: 1px solid #ddd; text-align: right; font-weight: bold;">${p.price?.toLocaleString()}</td>
+          <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${p.unit || 'kg'}</td>
+        </tr>
+        `).join('')}
+      </table>
+    </div>
+  `).join('');
+
+  // Generate product analysis cards
+  const productCardsHtml = analysis.productos?.map(prod => {
+    const alertsHtml = prod.alertas?.length > 0
+      ? `<div style="background: #FFF3E0; border-left: 4px solid #FF9800; padding: 10px; margin-top: 10px;">
+          ${prod.alertas.map(a => `<div>⚠️ ${a}</div>`).join('')}
+         </div>`
+      : '';
+
+    const precios = prod.preciosRecomendadosHidroBio || {};
+
+    return `
+    <div style="border: 2px solid #4CAF50; border-radius: 12px; margin: 20px 0; overflow: hidden;">
+      <div style="background: #4CAF50; color: white; padding: 15px;">
+        <h3 style="margin: 0;">🍅 ${prod.producto}</h3>
+      </div>
+      <div style="padding: 15px;">
+        <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 15px;">
+          <div style="flex: 1; min-width: 200px;">
+            <div style="color: #666; font-size: 12px;">MEDIANA MERCADO</div>
+            <div style="font-size: 24px; font-weight: bold; color: #1565C0;">
+              Gs. ${prod.medianaSupermercados?.toLocaleString() || 'N/A'}
+            </div>
+          </div>
+          <div style="flex: 1; min-width: 200px;">
+            <div style="color: #666; font-size: 12px;">TENDENCIA</div>
+            <div style="font-size: 18px;">
+              ${prod.tendencia === 'alza' ? '📈' : prod.tendencia === 'baja' ? '📉' : '➡️'}
+              ${prod.tendencia || 'estable'} (${prod.cambioSemanal || '0%'})
+            </div>
+          </div>
+          <div style="flex: 1; min-width: 200px;">
+            <div style="color: #666; font-size: 12px;">PISO ABSOLUTO</div>
+            <div style="font-size: 18px; color: #D32F2F;">
+              Gs. ${prod.pisoAbsoluto?.toLocaleString() || 'N/A'}
+            </div>
+          </div>
+        </div>
+
+        <h4 style="color: #2E7D32; margin: 15px 0 10px;">💰 PRECIOS B2B RECOMENDADOS</h4>
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr style="background: #E8F5E9;">
+            <th style="padding: 10px; border: 1px solid #C8E6C9; text-align: left;">Segmento</th>
+            <th style="padding: 10px; border: 1px solid #C8E6C9; text-align: right;">Precio (Gs.)</th>
+            <th style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">Margen</th>
+          </tr>
+          <tr>
+            <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐⭐⭐⭐ Consumidor Final (90%)</td>
+            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: right; font-weight: bold;">
+              ${precios.consumidorFinal?.precio?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">
+              ${precios.consumidorFinal?.margen || 'N/A'}
+            </td>
+          </tr>
+          <tr style="background: #F1F8E9;">
+            <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐⭐⭐ HORECA (75%)</td>
+            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: right; font-weight: bold;">
+              ${precios.horeca?.precio?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">
+              ${precios.horeca?.margen || 'N/A'}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐⭐ Supermercados (68%)</td>
+            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: right; font-weight: bold;">
+              ${precios.supermercados?.precio?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">
+              ${precios.supermercados?.margen || 'N/A'}
+            </td>
+          </tr>
+          <tr style="background: #F1F8E9;">
+            <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐ Institucional (60%)</td>
+            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: right; font-weight: bold;">
+              ${precios.institucional?.precio?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">
+              ${precios.institucional?.margen || 'N/A'}
+            </td>
+          </tr>
+        </table>
+
+        ${prod.comentario ? `
+        <div style="background: #E3F2FD; padding: 10px; margin-top: 15px; border-radius: 4px;">
+          💡 <em>${prod.comentario}</em>
+        </div>
+        ` : ''}
+
+        ${alertsHtml}
+      </div>
+    </div>
+    `;
+  }).join('') || '<p>No hay datos de productos</p>';
+
+  // Main email HTML
   return `
 <!DOCTYPE html>
 <html>
 <head>
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .header { background: #2E7D32; color: white; padding: 20px; text-align: center; }
-    .content { padding: 20px; }
-    .product-card { border: 1px solid #ddd; border-radius: 8px; margin: 15px 0; padding: 15px; }
-    .price-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
-    .price-table th, .price-table td { padding: 8px; border: 1px solid #ddd; text-align: left; }
-    .price-table th { background: #f5f5f5; }
-    .alert { background: #FFF3E0; border-left: 4px solid #FF9800; padding: 10px; margin: 10px 0; }
-    .recommendation { background: #E8F5E9; padding: 10px; border-radius: 4px; }
-  </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 </head>
-<body>
-  <div class="header">
-    <h1>📊 Aurelio - Análisis de Precios</h1>
-    <p>${date}</p>
-  </div>
-  <div class="content">
-    <h2>Resumen Ejecutivo</h2>
-    <p>${analysis.resumenEjecutivo || 'Sin datos disponibles'}</p>
+<body style="font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px;">
 
-    ${analysis.productos?.map(p => `
-    <div class="product-card">
-      <h3>${p.producto}</h3>
-      <p><strong>Precio mercado (mediana):</strong> Gs. ${p.precioMercadoMediana?.toLocaleString() || 'N/A'}</p>
-      <div class="recommendation">
-        <h4>Precios Recomendados HidroBio:</h4>
-        <ul>
-          <li>Redistribuidores: Gs. ${p.recomendaciones?.redistribuidores?.toLocaleString() || 'N/A'}</li>
-          <li>Supermercados: Gs. ${p.recomendaciones?.supermercados?.toLocaleString() || 'N/A'}</li>
-          <li>HORECA: Gs. ${p.recomendaciones?.horeca?.toLocaleString() || 'N/A'}</li>
-          <li>Consumidor Final: Gs. ${p.recomendaciones?.consumidorFinal?.toLocaleString() || 'N/A'}</li>
-        </ul>
-        <p><em>${p.razonamiento || ''}</em></p>
-      </div>
-    </div>
-    `).join('') || '<p>No hay datos de productos</p>'}
-
-    ${analysis.alertasGenerales?.length > 0 ? `
-    <div class="alert">
-      <h3>⚠️ Alertas</h3>
-      <ul>
-        ${analysis.alertasGenerales.map(a => `<li>${a}</li>`).join('')}
-      </ul>
-    </div>
-    ` : ''}
-
-    <p style="text-align: center; color: #666; font-size: 12px; margin-top: 30px;">
-      Generado por Aurelio - Sistema de Inteligencia de Precios HidroBio<br>
-      ${new Date().toISOString()}
+  <!-- Header -->
+  <div style="background: linear-gradient(135deg, #2E7D32, #4CAF50); color: white; padding: 30px; text-align: center; border-radius: 12px 12px 0 0;">
+    <h1 style="margin: 0; font-size: 28px;">🌿 AURELIO</h1>
+    <p style="margin: 5px 0 0; font-size: 16px; opacity: 0.9;">Elite Pricing Intelligence Agent</p>
+    <p style="margin: 15px 0 0; font-size: 14px; background: rgba(255,255,255,0.2); display: inline-block; padding: 5px 15px; border-radius: 20px;">
+      📅 ${date}
     </p>
   </div>
+
+  <!-- Summary -->
+  <div style="background: #FAFAFA; padding: 20px; border-left: 4px solid #4CAF50;">
+    <h2 style="color: #2E7D32; margin-top: 0;">📝 Resumen Ejecutivo</h2>
+    <p style="font-size: 15px; color: #555;">
+      ${analysis.resumenEjecutivo || 'Sin resumen disponible'}
+    </p>
+  </div>
+
+  <!-- Stats Bar -->
+  <div style="display: flex; flex-wrap: wrap; background: #E8F5E9; padding: 15px; margin: 20px 0; border-radius: 8px;">
+    <div style="flex: 1; min-width: 120px; text-align: center; padding: 10px;">
+      <div style="font-size: 24px; font-weight: bold; color: #2E7D32;">${todayPrices?.length || 0}</div>
+      <div style="font-size: 12px; color: #666;">Precios Recolectados</div>
+    </div>
+    <div style="flex: 1; min-width: 120px; text-align: center; padding: 10px;">
+      <div style="font-size: 24px; font-weight: bold; color: #2E7D32;">${Object.keys(pricesBySupermarket).length}</div>
+      <div style="font-size: 12px; color: #666;">Supermercados</div>
+    </div>
+    <div style="flex: 1; min-width: 120px; text-align: center; padding: 10px;">
+      <div style="font-size: 24px; font-weight: bold; color: #2E7D32;">${analysis.productos?.length || 0}</div>
+      <div style="font-size: 12px; color: #666;">Productos Analizados</div>
+    </div>
+  </div>
+
+  <!-- Product Analysis Cards -->
+  <h2 style="color: #2E7D32; border-bottom: 2px solid #4CAF50; padding-bottom: 10px;">
+    💰 Análisis y Recomendaciones por Producto
+  </h2>
+  ${productCardsHtml}
+
+  <!-- General Alerts -->
+  ${analysis.alertasGenerales?.length > 0 ? `
+  <div style="background: #FFF3E0; border: 1px solid #FFB74D; border-radius: 8px; padding: 20px; margin: 20px 0;">
+    <h3 style="color: #E65100; margin-top: 0;">🚨 Alertas Generales</h3>
+    <ul style="margin: 0; padding-left: 20px;">
+      ${analysis.alertasGenerales.map(a => `<li style="margin: 5px 0;">${a}</li>`).join('')}
+    </ul>
+  </div>
+  ` : ''}
+
+  <!-- Weekly Recommendation -->
+  ${analysis.recomendacionSemanal ? `
+  <div style="background: #E8F5E9; border: 2px solid #4CAF50; border-radius: 8px; padding: 20px; margin: 20px 0;">
+    <h3 style="color: #2E7D32; margin-top: 0;">✅ Recomendación para el Equipo Comercial</h3>
+    <p style="font-size: 15px; color: #333;">
+      ${analysis.recomendacionSemanal}
+    </p>
+  </div>
+  ` : ''}
+
+  <!-- Raw Prices Section (Collapsible-style) -->
+  <div style="margin-top: 30px; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
+    <div style="background: #1565C0; color: white; padding: 15px;">
+      <h3 style="margin: 0;">📊 Precios Recolectados Hoy por Supermercado</h3>
+    </div>
+    <div style="padding: 15px; background: #FAFAFA;">
+      ${rawPricesHtml || '<p>No hay precios disponibles</p>'}
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="text-align: center; margin-top: 30px; padding: 20px; background: #F5F5F5; border-radius: 8px;">
+    <p style="margin: 0; color: #666; font-size: 12px;">
+      🌿 Generado por <strong>Aurelio</strong> - Sistema de Inteligencia de Precios<br>
+      <strong>HidroBio S.A.</strong> | Nueva Italia, Paraguay<br>
+      ${new Date().toLocaleString('es-PY', { dateStyle: 'full', timeStyle: 'long' })}
+    </p>
+  </div>
+
 </body>
 </html>
   `;
