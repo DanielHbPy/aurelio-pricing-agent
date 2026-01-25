@@ -1,0 +1,11 @@
+# Nixpacks configuration for Railway
+# Required for better-sqlite3 native compilation
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "python311", "gcc", "gnumake"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[start]
+cmd = "node aurelio.mjs --daemon"

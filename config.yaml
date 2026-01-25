@@ -1,0 +1,109 @@
+# HidroBio Price Monitor Configuration
+# Daily retail price monitoring for Paraguay supermarkets
+
+email:
+  recipient: daniel@hidrobio.com.py
+  sender: daniel@hidrobio.com.py
+  smtp_host: smtp.zoho.com
+  smtp_port: 587
+  # SMTP credentials should be set via environment variables:
+  # SMTP_USER and SMTP_PASSWORD
+
+schedule:
+  time: "08:00"  # Paraguay time (PYT)
+  timezone: "America/Asuncion"
+
+alerts:
+  enabled: true
+  threshold_percent: 15  # Alert if price changes more than 15%
+
+products:
+  - name: Tomate Perita
+    search_terms:
+      - tomate perita
+      - tomate pera
+    unit: kg
+
+  - name: Tomate Santa Cruz
+    search_terms:
+      - tomate santa cruz
+    unit: kg
+
+  - name: Tomate Lisa
+    search_terms:
+      - tomate lisa
+      - tomate redondo
+    unit: kg
+
+  - name: Tomate Holandes
+    search_terms:
+      - tomate holandes
+      - tomate holandés
+    unit: kg
+
+  - name: Locote Rojo
+    search_terms:
+      - locote rojo
+      - pimiento rojo
+      - morron rojo
+      - morrón rojo
+    unit: kg
+
+  - name: Locote Amarillo
+    search_terms:
+      - locote amarillo
+      - pimiento amarillo
+      - morron amarillo
+      - morrón amarillo
+    unit: kg
+
+  - name: Lechuga Pirati
+    search_terms:
+      - lechuga pirati
+      - lechuga crespa
+    unit: unit
+
+supermarkets:
+  - name: Stock
+    enabled: true
+    base_url: https://www.stock.com.py
+    search_url: https://www.stock.com.py/search.aspx?searchterms={query}
+    type: html_scrape
+
+  - name: Superseis
+    enabled: true
+    base_url: https://www.superseis.com.py
+    search_url: https://www.superseis.com.py/search?search={query}
+    type: html_scrape
+
+  - name: Biggie
+    enabled: false  # Vue/Nuxt.js app - needs browser automation
+    base_url: https://www.biggie.com.py
+    search_url: https://www.biggie.com.py/buscar?q={query}
+    type: html_scrape
+    notes: SPA site - requires JavaScript rendering
+
+  - name: Salemma
+    enabled: false  # URL needs verification
+    base_url: https://www.salemma.com.py
+    search_url: https://www.salemma.com.py/buscar?q={query}
+    type: html_scrape
+
+  - name: Fortis
+    enabled: false  # URL needs verification
+    base_url: https://www.fortis.com.py
+    search_url: https://www.fortis.com.py/search?q={query}
+    type: html_scrape
+
+  - name: Casa Rica
+    enabled: false  # Slow/timeout issues - needs longer timeout or retries
+    base_url: https://casarica.com.py
+    search_url: https://casarica.com.py/?s={query}
+    category_url: https://casarica.com.py/catalogo/verduras-c287
+    type: html_scrape
+
+  - name: Real
+    enabled: false  # URL needs confirmation
+    base_url: https://www.real.com.py
+    search_url: ""
+    type: html_scrape

@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hidrobio.pricemonitor</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/danielstanca/Library/CloudStorage/ZohoWorkDriveTrueSync-HIDROBIOPARAGUAY/ESTRATEGIA/ClaudeSpace/HidroBioAgropark/price-monitor/main.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/danielstanca/Library/CloudStorage/ZohoWorkDriveTrueSync-HIDROBIOPARAGUAY/ESTRATEGIA/ClaudeSpace/HidroBioAgropark/price-monitor</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>SMTP_USER</key>
+        <string>daniel@hidrobio.com.py</string>
+        <key>SMTP_PASSWORD</key>
+        <string>VUc00zbQWqW2</string>
+    </dict>
+
+    <!-- Run daily at 8:00 AM -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/danielstanca/Library/CloudStorage/ZohoWorkDriveTrueSync-HIDROBIOPARAGUAY/ESTRATEGIA/ClaudeSpace/HidroBioAgropark/price-monitor/data/launchd.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/danielstanca/Library/CloudStorage/ZohoWorkDriveTrueSync-HIDROBIOPARAGUAY/ESTRATEGIA/ClaudeSpace/HidroBioAgropark/price-monitor/data/launchd.error.log</string>
+
+    <!-- Run immediately if missed (e.g., computer was asleep) -->
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

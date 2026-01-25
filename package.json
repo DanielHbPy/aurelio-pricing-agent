@@ -1,0 +1,32 @@
+{
+  "name": "aurelio-pricing-agent",
+  "version": "1.0.0",
+  "description": "Aurelio - Elite Pricing Intelligence Agent for HidroBio S.A.",
+  "type": "module",
+  "main": "aurelio.mjs",
+  "scripts": {
+    "start": "node aurelio.mjs --daemon",
+    "run-now": "node aurelio.mjs --now",
+    "schedule": "node aurelio.mjs --schedule",
+    "test": "node aurelio.mjs --now"
+  },
+  "keywords": [
+    "pricing",
+    "agriculture",
+    "hydroponic",
+    "paraguay",
+    "ai-agent"
+  ],
+  "author": "HidroBio S.A.",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "better-sqlite3": "^11.8.1",
+    "cheerio": "^1.0.0",
+    "node-fetch": "^3.3.2"
+  }
+}

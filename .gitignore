@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Database (local only - Railway uses ephemeral storage)
+data/
+
+# Environment files
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary files
+*.tmp
+*.temp

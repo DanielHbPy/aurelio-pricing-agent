@@ -1,0 +1,19 @@
+# HidroBio Price Monitor Dependencies
+
+# Web scraping
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+httpx>=0.25.0
+
+# Browser automation (for JavaScript-heavy sites)
+playwright>=1.40.0
+
+# Configuration
+pyyaml>=6.0.1
+
+# Scheduling
+schedule>=1.2.0
+
+# Timezone handling
+pytz>=2024.1
