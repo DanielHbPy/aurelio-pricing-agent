@@ -1360,14 +1360,17 @@ async function sendEmailReport(analysis, todayPrices) {
       console.log('[Aurelio] 📧 Enviando email a daniel@hidrobio.com.py...');
 
       // Create Zoho Mail transporter
+      // Using port 465 with SSL (more reliable on cloud platforms like Railway)
       const transporter = nodemailer.createTransport({
         host: 'smtp.zoho.com',
-        port: 587,
-        secure: false, // TLS
+        port: 465,
+        secure: true, // SSL
         auth: {
           user: smtpUser,
           pass: smtpPassword
-        }
+        },
+        connectionTimeout: 30000, // 30 second timeout
+        greetingTimeout: 15000
       });
 
       // Generate HTML content
