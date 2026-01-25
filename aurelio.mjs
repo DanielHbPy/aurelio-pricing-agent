@@ -17,7 +17,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import * as cheerio from 'cheerio';
 import fetch from 'node-fetch';
 import Database from 'better-sqlite3';
-import nodemailer from 'nodemailer';
+// Note: nodemailer removed - Railway blocks SMTP, using Zoho Mail API instead
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, mkdirSync, readFileSync } from 'fs';
@@ -1351,45 +1351,71 @@ async function sendEmailReport(analysis, todayPrices) {
   console.log(`  Generado por Aurelio | ${new Date().toISOString()}`);
   console.log('═'.repeat(80) + '\n');
 
-  // Send actual email using nodemailer with Zoho SMTP
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPassword = process.env.SMTP_PASSWORD;
+  // Send email using Zoho Mail API (HTTPS - works on cloud platforms)
+  // Railway blocks SMTP, so we use the Zoho Mail API instead
+  const zohoClientId = process.env.ZOHO_CLIENT_ID;
+  const zohoClientSecret = process.env.ZOHO_CLIENT_SECRET;
+  const zohoRefreshToken = process.env.ZOHO_REFRESH_TOKEN;
+  const zohoDC = process.env.ZOHO_DC || '.com';
 
-  if (smtpUser && smtpPassword) {
+  if (zohoClientId && zohoClientSecret && zohoRefreshToken) {
     try {
       console.log('[Aurelio] 📧 Enviando email a daniel@hidrobio.com.py...');
 
-      // Create Zoho Mail transporter
-      // Using port 465 with SSL (more reliable on cloud platforms like Railway)
-      const transporter = nodemailer.createTransport({
-        host: 'smtp.zoho.com',
-        port: 465,
-        secure: true, // SSL
-        auth: {
-          user: smtpUser,
-          pass: smtpPassword
-        },
-        connectionTimeout: 30000, // 30 second timeout
-        greetingTimeout: 15000
+      // Get access token
+      const tokenUrl = `https://accounts.zoho${zohoDC}/oauth/v2/token`;
+      const tokenResponse = await fetch(tokenUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: zohoClientId,
+          client_secret: zohoClientSecret,
+          refresh_token: zohoRefreshToken
+        })
       });
+      const tokenData = await tokenResponse.json();
+
+      if (!tokenData.access_token) {
+        throw new Error('Failed to get Zoho access token');
+      }
 
       // Generate HTML content
       const htmlContent = generateEmailHtml(analysis, todayPrices, date);
 
-      // Send email
-      const info = await transporter.sendMail({
-        from: `"Aurelio - HidroBio" <${smtpUser}>`,
-        to: 'daniel@hidrobio.com.py',
+      // Send email via Zoho Mail API
+      const accountId = '862876482'; // HidroBio account ID
+      const mailUrl = `https://mail.zoho${zohoDC}/api/accounts/${accountId}/messages`;
+
+      const emailPayload = {
+        fromAddress: 'daniel@hidrobio.com.py',
+        toAddress: 'daniel@hidrobio.com.py',
         subject: subject,
-        html: htmlContent
+        content: htmlContent,
+        mailFormat: 'html'
+      };
+
+      const mailResponse = await fetch(mailUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Zoho-oauthtoken ${tokenData.access_token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(emailPayload)
       });
 
-      console.log(`[Aurelio] ✅ Email enviado: ${info.messageId}`);
+      const mailResult = await mailResponse.json();
+
+      if (mailResult.status && mailResult.status.code === 200) {
+        console.log(`[Aurelio] ✅ Email enviado via Zoho Mail API`);
+      } else {
+        console.error('[Aurelio] ❌ Error Zoho Mail API:', JSON.stringify(mailResult));
+      }
     } catch (error) {
       console.error('[Aurelio] ❌ Error enviando email:', error.message);
     }
   } else {
-    console.log('[Aurelio] ℹ️ Email no configurado (ver SMTP_USER, SMTP_PASSWORD)');
+    console.log('[Aurelio] ℹ️ Email no configurado (ver ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN)');
   }
 }
 
