@@ -30,11 +30,16 @@ ZOHO_CLIENT_ID=<your-zoho-client-id>
 ZOHO_CLIENT_SECRET=<your-zoho-client-secret>
 ZOHO_REFRESH_TOKEN=<your-zoho-refresh-token>
 ZOHO_DC=.com
-SMTP_USER=daniel@hidrobio.com.py
-SMTP_PASSWORD=<your-zoho-app-password>
+RESEND_API_KEY=<your-resend-api-key>
 ```
 
-**Note:** Get credentials from `/Users/danielstanca/Development/HidroBioAgroparkWithClaude/zoho-mcp-server/.env`
+**Get Resend API Key:**
+1. Go to https://resend.com/signup (free tier: 100 emails/day)
+2. Create account and verify email
+3. Go to API Keys → Create API Key
+4. Copy the key (starts with `re_`)
+
+**Note:** Zoho credentials from `/Users/danielstanca/Development/HidroBioAgroparkWithClaude/zoho-mcp-server/.env`
 
 ### 4. Deploy
 

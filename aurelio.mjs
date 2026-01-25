@@ -1351,71 +1351,43 @@ async function sendEmailReport(analysis, todayPrices) {
   console.log(`  Generado por Aurelio | ${new Date().toISOString()}`);
   console.log('═'.repeat(80) + '\n');
 
-  // Send email using Zoho Mail API (HTTPS - works on cloud platforms)
-  // Railway blocks SMTP, so we use the Zoho Mail API instead
-  const zohoClientId = process.env.ZOHO_CLIENT_ID;
-  const zohoClientSecret = process.env.ZOHO_CLIENT_SECRET;
-  const zohoRefreshToken = process.env.ZOHO_REFRESH_TOKEN;
-  const zohoDC = process.env.ZOHO_DC || '.com';
+  // Send email using Resend API (HTTPS - works on cloud platforms)
+  // Railway blocks SMTP, so we use Resend's REST API instead
+  const resendApiKey = process.env.RESEND_API_KEY;
 
-  if (zohoClientId && zohoClientSecret && zohoRefreshToken) {
+  if (resendApiKey) {
     try {
-      console.log('[Aurelio] 📧 Enviando email a daniel@hidrobio.com.py...');
-
-      // Get access token
-      const tokenUrl = `https://accounts.zoho${zohoDC}/oauth/v2/token`;
-      const tokenResponse = await fetch(tokenUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          client_id: zohoClientId,
-          client_secret: zohoClientSecret,
-          refresh_token: zohoRefreshToken
-        })
-      });
-      const tokenData = await tokenResponse.json();
-
-      if (!tokenData.access_token) {
-        throw new Error('Failed to get Zoho access token');
-      }
+      console.log('[Aurelio] 📧 Enviando email a daniel@hidrobio.com.py via Resend...');
 
       // Generate HTML content
       const htmlContent = generateEmailHtml(analysis, todayPrices, date);
 
-      // Send email via Zoho Mail API
-      const accountId = '862876482'; // HidroBio account ID
-      const mailUrl = `https://mail.zoho${zohoDC}/api/accounts/${accountId}/messages`;
-
-      const emailPayload = {
-        fromAddress: 'daniel@hidrobio.com.py',
-        toAddress: 'daniel@hidrobio.com.py',
-        subject: subject,
-        content: htmlContent,
-        mailFormat: 'html'
-      };
-
-      const mailResponse = await fetch(mailUrl, {
+      const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: {
-          'Authorization': `Zoho-oauthtoken ${tokenData.access_token}`,
+          'Authorization': `Bearer ${resendApiKey}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(emailPayload)
+        body: JSON.stringify({
+          from: 'Aurelio HidroBio <onboarding@resend.dev>',
+          to: ['daniel@hidrobio.com.py'],
+          subject: subject,
+          html: htmlContent
+        })
       });
 
-      const mailResult = await mailResponse.json();
+      const result = await response.json();
 
-      if (mailResult.status && mailResult.status.code === 200) {
-        console.log(`[Aurelio] ✅ Email enviado via Zoho Mail API`);
+      if (response.ok && result.id) {
+        console.log(`[Aurelio] ✅ Email enviado via Resend (ID: ${result.id})`);
       } else {
-        console.error('[Aurelio] ❌ Error Zoho Mail API:', JSON.stringify(mailResult));
+        console.error('[Aurelio] ❌ Error Resend API:', JSON.stringify(result));
       }
     } catch (error) {
       console.error('[Aurelio] ❌ Error enviando email:', error.message);
     }
   } else {
-    console.log('[Aurelio] ℹ️ Email no configurado (ver ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN)');
+    console.log('[Aurelio] ℹ️ Email no configurado (agregar RESEND_API_KEY a las variables de entorno)');
   }
 }
 
