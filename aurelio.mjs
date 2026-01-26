@@ -17,7 +17,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import * as cheerio from 'cheerio';
 import fetch from 'node-fetch';
 import Database from 'better-sqlite3';
-// Note: nodemailer removed - Railway blocks SMTP, using Zoho Mail API instead
+import nodemailer from 'nodemailer';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, mkdirSync, readFileSync } from 'fs';
@@ -36,8 +36,17 @@ const CONFIG = {
 
   // Schedule (Paraguay Time - UTC-4 / UTC-3 DST)
   schedule: {
-    hour: 8,
-    minute: 0,
+    // Daily scrape: 05:00 PYT - collect prices, save to DB, alert on errors
+    dailyScrape: {
+      hour: 5,
+      minute: 0
+    },
+    // Weekly analysis: Thursday 15:00 PYT - full analysis + email report
+    weeklyAnalysis: {
+      dayOfWeek: 4, // Thursday (0=Sunday, 4=Thursday)
+      hour: 15,
+      minute: 0
+    },
     timezone: 'America/Asuncion'
   },
 
@@ -133,10 +142,16 @@ const CONFIG = {
       name: 'Casa Rica',
       enabled: true,
       baseUrl: 'https://casarica.com.py',
-      // Search doesn't work well for fresh produce, use category instead
       categoryUrl: 'https://casarica.com.py/catalogo/verduras-c287',
+      // Direct product URLs for items not in category page (search is JS-rendered)
+      // Verified via Chrome MCP 2026-01-26: Amarillo 48,300 | Rojo 41,400
+      directProducts: {
+        'tomate cherry': 'https://casarica.com.py/tomate-cherry-angel-sweet-soleil-300-g-p40414',
+        'locote amarillo': 'https://casarica.com.py/locote-amarillo-x-kg-p4301',
+        'locote rojo': 'https://casarica.com.py/locote-rojo-importado-x-kg-p4305'
+      },
       scraper: 'casarica',
-      notes: 'WordPress/WooCommerce - use category browsing'
+      notes: 'WordPress/WooCommerce - use category + direct URLs for items not in category'
     },
     {
       name: 'Fortis',
@@ -410,12 +425,19 @@ const SCRAPERS = {
         const price = extractPrice(priceText);
 
         if (name && price && isFreshProduce(name)) {
-          results.push({
+          // Normalize price to per-kg for packaged products
+          const normalized = normalizePricePerKg(name, price);
+          const result = {
             supermarket: config.name,
-            name: name.trim(),
-            price,
+            name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+            price: normalized.price,
             unit: detectUnit(name)
-          });
+          };
+          if (normalized.normalized) {
+            result.originalPrice = normalized.originalPrice;
+            result.packageSize = normalized.packageSize;
+          }
+          results.push(result);
         }
       });
 
@@ -434,12 +456,19 @@ const SCRAPERS = {
           if (name && price && isFreshProduce(name)) {
             // Check for duplicates
             if (!results.some(r => r.name === name)) {
-              results.push({
+              // Normalize price to per-kg
+              const normalized = normalizePricePerKg(name, price);
+              const result = {
                 supermarket: config.name,
-                name: name.trim(),
-                price,
+                name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+                price: normalized.price,
                 unit: detectUnit(name)
-              });
+              };
+              if (normalized.normalized) {
+                result.originalPrice = normalized.originalPrice;
+                result.packageSize = normalized.packageSize;
+              }
+              results.push(result);
             }
           }
         });
@@ -507,56 +536,164 @@ const SCRAPERS = {
 
   /**
    * Casa Rica scraper
-   * Uses category browsing (search doesn't work well for fresh produce)
+   * Uses category browsing + direct product URLs for premium items
+   * Cherry tomatoes are NOT in the category page (search is JS-rendered)
    * Structure: div.product > h2.ecommercepro-loop-product__title for name
    *            span.price > span.amount for price (format: "₲. 7.200")
    */
   async casarica(config, query) {
     const results = [];
+    const queryLower = query.toLowerCase();
 
-    try {
-      // Use category page for fresh produce
-      const url = config.categoryUrl || 'https://casarica.com.py/catalogo/verduras-c287';
+    // Helper to parse Casa Rica products from category HTML
+    const parseProducts = ($, queryLower) => {
+      const found = [];
 
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        timeout: 45000
-      });
+      // Try multiple product selectors (WooCommerce variations)
+      const productSelectors = [
+        'div.product',
+        'li.product',
+        '.product-small',
+        '.product-item'
+      ];
 
-      const html = await response.text();
-      const $ = cheerio.load(html);
+      for (const selector of productSelectors) {
+        $(selector).each((_, el) => {
+          const $el = $(el);
 
-      $('div.product').each((_, el) => {
-        const $el = $(el);
+          // Get name from multiple possible locations
+          let name = $el.find('h2.ecommercepro-loop-product__title').text().trim();
+          if (!name) name = $el.find('.product-title').text().trim();
+          if (!name) name = $el.find('.woocommerce-loop-product__title').text().trim();
+          if (!name) name = $el.find('h2 a, h3 a, .title a').first().text().trim();
+          if (!name) name = $el.find('a.woocommerce-LoopProduct-link').text().trim();
 
-        // Get name from product title
-        let name = $el.find('h2.ecommercepro-loop-product__title').text().trim();
-        if (!name) {
-          name = $el.find('.product-title, .title').first().text().trim();
-        }
+          // Get price - avoid span.amount alone as it picks up discount badges (e.g., "30%")
+          // Use more specific selectors that target actual price elements
+          let priceText = $el.find('.price .ecommercepro-Price-amount').first().text().trim();
+          if (!priceText) priceText = $el.find('.price .amount').first().text().trim();
+          if (!priceText) priceText = $el.find('.woocommerce-Price-amount.amount').first().text().trim();
+          if (!priceText) priceText = $el.find('ins .amount').first().text().trim();  // Discounted price
+          if (!priceText) priceText = $el.find('.price').first().text().trim();
 
-        // Get price from span.amount (format: "₲. 7.200")
-        let priceText = $el.find('span.amount').first().text().trim();
-        const price = extractPrice(priceText);
+          const price = extractPrice(priceText);
+          const nameLower = name.toLowerCase();
 
-        // Filter by query if provided
-        const queryLower = query.toLowerCase();
-        const nameLower = name.toLowerCase();
+          // Match against query (first word match)
+          const queryFirstWord = queryLower.split(' ')[0];
+          if (name && price && nameLower.includes(queryFirstWord) && isFreshProduce(name)) {
+            // Normalize price to per-kg for packaged products
+            const normalized = normalizePricePerKg(name, price);
 
-        if (name && price && nameLower.includes(queryLower.split(' ')[0]) && isFreshProduce(name)) {
-          // Avoid duplicates
-          if (!results.some(r => r.name === name)) {
-            results.push({
-              supermarket: config.name,
-              name: name.trim(),
-              price,
-              unit: detectUnit(name)
-            });
+            // Avoid duplicates
+            if (!found.some(r => r.name === name)) {
+              const result = {
+                supermarket: config.name,
+                name: name.trim(),
+                price: normalized.price,
+                unit: detectUnit(name)
+              };
+              if (normalized.normalized) {
+                result.originalPrice = normalized.originalPrice;
+                result.packageSize = normalized.packageSize;
+                result.name = `${name.trim()} [→${normalized.packageSize}→kg]`;
+              }
+              found.push(result);
+            }
+          }
+        });
+      }
+
+      return found;
+    };
+
+    // Helper to scrape a single product page
+    const scrapeDirectProduct = async (productUrl, queryLower) => {
+      try {
+        const response = await fetch(productUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          },
+          timeout: 30000
+        });
+
+        const html = await response.text();
+        const $ = cheerio.load(html);
+
+        // Get product name from h1
+        let name = $('h1.product_title, h1.product-title, .product-title').text().trim();
+        // Remove duplicate text (Casa Rica sometimes doubles the title)
+        if (name) {
+          const half = name.length / 2;
+          if (name.substring(0, half) === name.substring(half)) {
+            name = name.substring(0, half);
           }
         }
-      });
+
+        // Get price - Casa Rica uses ecommercepro-Price-amount class
+        // Avoid span.amount alone as it can pick up discount badges
+        let priceText = $('.price .ecommercepro-Price-amount').first().text().trim();
+        if (!priceText) priceText = $('.price .amount').first().text().trim();
+        if (!priceText) priceText = $('p.price').first().text().trim();
+        if (!priceText) priceText = $('.summary .price').first().text().trim();
+        const price = extractPrice(priceText);
+
+        if (name && price && isFreshProduce(name)) {
+          const normalized = normalizePricePerKg(name, price);
+          const result = {
+            supermarket: config.name,
+            name: name.trim(),
+            price: normalized.price,
+            unit: detectUnit(name)
+          };
+          if (normalized.normalized) {
+            result.originalPrice = normalized.originalPrice;
+            result.packageSize = normalized.packageSize;
+            result.name = `${name.trim()} [→${normalized.packageSize}→kg]`;
+          }
+          return result;
+        }
+      } catch (error) {
+        console.error(`[Aurelio] Error scraping direct product ${productUrl}:`, error.message);
+      }
+      return null;
+    };
+
+    try {
+      // STRATEGY 1: Check if we have a direct product URL for this query
+      if (config.directProducts) {
+        for (const [productKey, productUrl] of Object.entries(config.directProducts)) {
+          if (queryLower.includes(productKey) || productKey.includes(queryLower)) {
+            const directResult = await scrapeDirectProduct(productUrl, queryLower);
+            if (directResult) {
+              results.push(directResult);
+            }
+          }
+        }
+      }
+
+      // STRATEGY 2: If no direct match or want more results, try category page
+      if (results.length === 0) {
+        const categoryUrl = config.categoryUrl || 'https://casarica.com.py/catalogo/verduras-c287';
+
+        const response = await fetch(categoryUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          },
+          timeout: 45000
+        });
+
+        const html = await response.text();
+        const $ = cheerio.load(html);
+        const categoryResults = parseProducts($, queryLower);
+
+        // Add only non-duplicate results
+        for (const r of categoryResults) {
+          if (!results.some(existing => existing.name === r.name)) {
+            results.push(r);
+          }
+        }
+      }
     } catch (error) {
       console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
     }
@@ -833,11 +970,11 @@ function isFreshProduce(name) {
     'chorizo', 'salchicha', 'hamburguesa', 'empanada', 'pizza',
     'milanesa', 'fiambre', 'jamon', 'jamón', 'queso',
     // Other non-fresh
-    'congelado', 'frozen', 'envasado', 'procesado',
+    'congelado', 'frozen', 'procesado',
     'polvo', 'condimento', 'especias', 'sazonador',
-    // Packaging that indicates processed
+    // Packaging that indicates processed (but NOT gram weight which can be fresh packaged)
     'frasco', 'botella', 'tetra', 'brick', 'sachet',
-    'gr ', 'grs', 'ml ', 'cc '  // gram/ml measures usually indicate processed
+    'ml ', 'cc '  // ml/cc measures usually indicate processed liquids
   ];
 
   const nameLower = name.toLowerCase();
@@ -847,18 +984,25 @@ function isFreshProduce(name) {
     return false;
   }
 
+  // Allow packaged fresh produce (cherry tomatoes, etc.) - these have gram weights
+  // Examples: "TOMATE CHERRY 300 G", "LECHUGA HIDROPONICA 200G"
+  const packagedFresh = ['cherry', 'hidroponic', 'hidroponico', 'hidropónico', 'organico', 'orgánico'];
+  if (packagedFresh.some(word => nameLower.includes(word))) {
+    return true;  // These are fresh even if packaged
+  }
+
   // Must contain a recognizable fresh produce indicator or be short enough
   // (long names are usually processed products with ingredient lists)
-  if (nameLower.length > 60) {
+  if (nameLower.length > 70) {  // Increased limit for packaged product names
     return false;
   }
 
   // Fresh produce typically has "x kg" or "por kg" or simple names
-  const freshIndicators = ['x kg', 'por kg', '/kg', 'x un', 'por un', 'por kilo', 'fresco', 'fresca', 'por unidad', 'x mz'];
+  const freshIndicators = ['x kg', 'por kg', '/kg', 'x un', 'por un', 'por kilo', 'fresco', 'fresca', 'por unidad', 'x mz', ' g ', ' gr'];
   const hasFreshIndicator = freshIndicators.some(ind => nameLower.includes(ind));
 
-  // If name is short (< 35 chars) and doesn't have excluded words, it's likely fresh
-  return nameLower.length < 35 || hasFreshIndicator;
+  // If name is reasonable length and doesn't have excluded words, it's likely fresh
+  return nameLower.length < 45 || hasFreshIndicator;
 }
 
 /**
@@ -873,6 +1017,52 @@ function detectUnit(name) {
     return 'unidad';
   }
   return 'kg';  // Default
+}
+
+/**
+ * Normalize price to per-kg for products sold by weight
+ * Detects package sizes like "300 g", "500g", "1 kg" and converts
+ */
+function normalizePricePerKg(name, price) {
+  const nameLower = name.toLowerCase();
+
+  // Skip if already per kg
+  if (nameLower.includes('/kg') || nameLower.includes('por kg') || nameLower.includes('x kg')) {
+    return { price, normalized: false, packageSize: null };
+  }
+
+  // Detect package weight patterns
+  // Pattern: "300 g", "300g", "500 g", "1 kg", "1.5 kg", etc.
+  const gramsMatch = nameLower.match(/(\d+(?:[.,]\d+)?)\s*g(?:r|rs|ramos)?(?:\s|$|\))/i);
+  const kgMatch = nameLower.match(/(\d+(?:[.,]\d+)?)\s*kg(?:\s|$|\))/i);
+
+  if (gramsMatch) {
+    const grams = parseFloat(gramsMatch[1].replace(',', '.'));
+    if (grams > 0 && grams < 1000) {  // Reasonable gram range
+      const pricePerKg = Math.round(price * (1000 / grams));
+      return {
+        price: pricePerKg,
+        normalized: true,
+        packageSize: `${grams}g`,
+        originalPrice: price
+      };
+    }
+  }
+
+  if (kgMatch) {
+    const kg = parseFloat(kgMatch[1].replace(',', '.'));
+    if (kg > 0 && kg !== 1) {  // Not exactly 1 kg
+      const pricePerKg = Math.round(price / kg);
+      return {
+        price: pricePerKg,
+        normalized: true,
+        packageSize: `${kg}kg`,
+        originalPrice: price
+      };
+    }
+  }
+
+  return { price, normalized: false, packageSize: null };
 }
 
 /**
@@ -952,13 +1142,22 @@ function loadZohoCredentials() {
       ZOHO_CLIENT_ID: process.env.ZOHO_CLIENT_ID,
       ZOHO_CLIENT_SECRET: process.env.ZOHO_CLIENT_SECRET,
       ZOHO_REFRESH_TOKEN: process.env.ZOHO_REFRESH_TOKEN,
-      ZOHO_DC: process.env.ZOHO_DC || '.com'
+      ZOHO_DC: process.env.ZOHO_DC || '.com',
+      ZOHO_SMTP_USER: process.env.ZOHO_SMTP_USER,
+      ZOHO_SMTP_PASSWORD: process.env.ZOHO_SMTP_PASSWORD,
+      EMAIL_TO: process.env.EMAIL_TO
     };
   }
 
-  // Fallback to .env file
-  const envPath = join(__dirname, '..', 'zoho-mcp-server', '.env');
-  if (existsSync(envPath)) {
+  // Fallback to .env file (try multiple locations)
+  const envPaths = [
+    join(__dirname, '..', 'zoho-mcp', '.env'),               // From agents/aurelio/ → agents/zoho-mcp/
+    join(__dirname, '..', '..', 'zoho-mcp-server', '.env'),  // Legacy location
+    join(__dirname, '.env')                                   // Local .env
+  ];
+
+  const envPath = envPaths.find(p => existsSync(p));
+  if (envPath) {
     const content = readFileSync(envPath, 'utf-8');
     const creds = {};
     for (const line of content.split('\n')) {
@@ -971,6 +1170,19 @@ function loadZohoCredentials() {
   }
 
   return {};
+}
+
+/**
+ * Load credentials from .env file and set as environment variables
+ * Called once at startup to ensure all env vars are available
+ */
+function loadEnvCredentials() {
+  const creds = loadZohoCredentials();
+  for (const [key, value] of Object.entries(creds)) {
+    if (value && !process.env[key]) {
+      process.env[key] = value;
+    }
+  }
 }
 
 async function getZohoAccessToken(credentials) {
@@ -1035,11 +1247,176 @@ async function importToAnalytics(accessToken, data, importType, tableId) {
 }
 
 // =============================================================================
+// ZOHO BOOKS INTEGRATION - Sales History
+// =============================================================================
+
+/**
+ * Query Zoho Books for HidroBio sales prices over the last week
+ * Returns detailed sales data per product for strategy implementation analysis
+ */
+async function getWeeklySalesPrices() {
+  const credentials = loadZohoCredentials();
+
+  if (!credentials.ZOHO_REFRESH_TOKEN) {
+    console.log('[Aurelio] ⚠️ Sin credenciales para consultar ventas de Zoho Books');
+    return { sales: {}, period: null };
+  }
+
+  try {
+    const accessToken = await getZohoAccessToken(credentials);
+    const orgId = credentials.ZOHO_ORG_ID || '862876482';
+
+    // Calculate date range (last 7 days)
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 7);
+
+    const formatDate = (d) => d.toISOString().split('T')[0];
+    const startDateStr = formatDate(startDate);
+    const endDateStr = formatDate(endDate);
+
+    // Query invoices from last 7 days
+    // Zoho Books API: use date_start and date_end parameters, status as separate param
+    const invoicesUrl = `https://www.zohoapis.com/books/v3/invoices?organization_id=${orgId}&date_start=${startDateStr}&date_end=${endDateStr}&status=sent&sort_column=date&sort_order=D&per_page=100`;
+
+    const invoicesResponse = await fetch(invoicesUrl, {
+      headers: {
+        'Authorization': `Zoho-oauthtoken ${accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!invoicesResponse.ok) {
+      const errorText = await invoicesResponse.text();
+      console.log('[Aurelio] ⚠️ Error consultando facturas:', invoicesResponse.status, errorText.substring(0, 200));
+      return { sales: {}, period: { start: startDateStr, end: endDateStr } };
+    }
+
+    const invoicesData = await invoicesResponse.json();
+    const invoices = invoicesData.invoices || [];
+
+    console.log(`[Aurelio] 📊 Encontradas ${invoices.length} facturas del ${startDateStr} al ${endDateStr}`);
+
+    // Product name mappings (Zoho Books item names → Aurelio product names)
+    const productMappings = {
+      'TOMATE LISA': 'Tomate Lisa',
+      'TOMATE PERITA': 'Tomate Perita',
+      'TOMATE CHERRY': 'Tomate Cherry',
+      'LOCOTE ROJO': 'Locote Rojo',
+      'LOCOTE AMARILLO': 'Locote Amarillo',
+      'LECHUGA PIRATI': 'Lechuga Pirati',
+      'LECHUGA': 'Lechuga Pirati',  // Generic lechuga → Pirati
+      'PEREJIL': 'Verdeos',
+      'CILANTRO': 'Verdeos',
+      'ALBAHACA': 'Verdeos',
+      'CEBOLLITA': 'Verdeos',
+      'RUCULA': 'Verdeos'
+    };
+
+    // Aggregate sales by product with customer segment tracking
+    const salesByProduct = {};
+
+    for (const invoice of invoices) {
+      // Skip if invoice date is outside our range (double-check)
+      const invoiceDate = new Date(invoice.date);
+      if (invoiceDate < startDate || invoiceDate > endDate) continue;
+
+      // Get invoice details to access line items
+      const detailUrl = `https://www.zohoapis.com/books/v3/invoices/${invoice.invoice_id}?organization_id=${orgId}`;
+      const detailResponse = await fetch(detailUrl, {
+        headers: {
+          'Authorization': `Zoho-oauthtoken ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!detailResponse.ok) continue;
+
+      const detailData = await detailResponse.json();
+      const lineItems = detailData.invoice?.line_items || [];
+      const customerName = invoice.customer_name || 'Unknown';
+
+      for (const item of lineItems) {
+        const itemName = (item.name || '').toUpperCase();
+
+        // Find matching product
+        for (const [bookName, aurelioName] of Object.entries(productMappings)) {
+          if (itemName.includes(bookName)) {
+            if (!salesByProduct[aurelioName]) {
+              salesByProduct[aurelioName] = {
+                totalRevenue: 0,
+                totalQuantity: 0,
+                transactions: [],
+                customers: new Set()
+              };
+            }
+
+            const unitPrice = item.rate || (item.item_total / item.quantity);
+            const quantity = item.quantity || 0;
+
+            salesByProduct[aurelioName].totalRevenue += item.item_total || 0;
+            salesByProduct[aurelioName].totalQuantity += quantity;
+            salesByProduct[aurelioName].customers.add(customerName);
+            salesByProduct[aurelioName].transactions.push({
+              date: invoice.date,
+              customer: customerName,
+              quantity: quantity,
+              unitPrice: Math.round(unitPrice),
+              total: item.item_total || 0
+            });
+            break;
+          }
+        }
+      }
+    }
+
+    // Calculate statistics for each product
+    const salesData = {};
+    for (const [product, data] of Object.entries(salesByProduct)) {
+      if (data.totalQuantity > 0) {
+        const prices = data.transactions.map(t => t.unitPrice);
+        salesData[product] = {
+          avgPrice: Math.round(data.totalRevenue / data.totalQuantity),
+          totalQty: Math.round(data.totalQuantity * 10) / 10,  // 1 decimal
+          totalRevenue: Math.round(data.totalRevenue),
+          transactionCount: data.transactions.length,
+          customerCount: data.customers.size,
+          minPrice: Math.min(...prices),
+          maxPrice: Math.max(...prices),
+          priceSpread: Math.max(...prices) - Math.min(...prices),
+          // For strategy analysis: what % of transactions were at different price points
+          transactions: data.transactions
+        };
+      }
+    }
+
+    console.log(`[Aurelio] ✅ Ventas analizadas: ${Object.keys(salesData).length} productos, ${invoices.length} facturas`);
+
+    return {
+      sales: salesData,
+      period: {
+        start: startDateStr,
+        end: endDateStr,
+        invoiceCount: invoices.length
+      }
+    };
+
+  } catch (error) {
+    console.error('[Aurelio] ❌ Error consultando Zoho Books:', error.message);
+    return { sales: {}, period: null };
+  }
+}
+
+// =============================================================================
 // REASONING ENGINE (Claude-Powered Analysis)
 // =============================================================================
 
 async function analyzeWithClaude(db, todayPrices) {
   const anthropic = new Anthropic();
+
+  // Get weekly sales data from Zoho Books
+  console.log('[Aurelio] 📊 Consultando precios de venta de última semana...');
+  const weeklySales = await getWeeklySalesPrices();
 
   // Prepare market data for each product
   const productAnalyses = [];
@@ -1082,6 +1459,9 @@ async function analyzeWithClaude(db, todayPrices) {
       margins[segment] = ((price - productConfig.hidrobioCost) / productConfig.hidrobioCost * 100).toFixed(1);
     }
 
+    // Get actual sales data for this product
+    const salesData = weeklySales[productConfig.name] || null;
+
     productAnalyses.push({
       product: productConfig.name,
       unit: productConfig.unit,
@@ -1096,7 +1476,9 @@ async function analyzeWithClaude(db, todayPrices) {
       margins,
       priceCount: prices.length,
       trend: historicalMedian ? ((marketMedian - historicalMedian) / historicalMedian * 100).toFixed(1) : null,
-      alerts
+      alerts,
+      // Actual HidroBio sales data from Zoho Books
+      actualSales: salesData
     });
   }
 
@@ -1133,19 +1515,63 @@ FORMATO DE RESPUESTA (JSON puro, sin markdown):
       "tendencia": "subiendo|bajando|estable",
       "cambioSemanal": "X%",
       "preciosRecomendadosHidroBio": {
-        "consumidorFinal": { "precio": número, "margen": "X%" },
-        "horeca": { "precio": número, "margen": "X%" },
-        "supermercados": { "precio": número, "margen": "X%" },
-        "institucional": { "precio": número, "margen": "X%" }
+        "consumidorFinal": {
+          "precioMeta": número (precio objetivo - 90% de mediana),
+          "precioMinimo": número (precio mínimo negociable - 85% de mediana, respetando piso),
+          "precioMaximo": número (precio máximo - 95% de mediana),
+          "margen": "X%"
+        },
+        "horeca": {
+          "precioMeta": número (75% de mediana),
+          "precioMinimo": número (70% de mediana, respetando piso),
+          "precioMaximo": número (80% de mediana),
+          "margen": "X%"
+        },
+        "supermercados": {
+          "precioMeta": número (68% de mediana),
+          "precioMinimo": número (60% de mediana, respetando piso),
+          "precioMaximo": número (75% de mediana),
+          "margen": "X%"
+        },
+        "institucional": {
+          "precioMeta": número (60% de mediana),
+          "precioMinimo": número (55% de mediana, respetando piso),
+          "precioMaximo": número (65% de mediana),
+          "margen": "X%"
+        }
       },
       "pisoAbsoluto": número,
       "comentario": "Observación específica del producto",
-      "alertas": ["lista de alertas si hay violaciones de reglas"]
+      "alertas": ["lista de alertas si hay violaciones de reglas"],
+      "implementacionEstrategia": {
+        "tieneVentas": boolean,
+        "precioPromedioVendido": número o null,
+        "cantidadVendida": número o null,
+        "porcentajeVsMediana": "X%" o null (precioVendido/medianaSupermercados*100),
+        "evaluacion": "excelente|bueno|aceptable|bajo|critico|sin_datos",
+        "comentarioImplementacion": "Análisis breve de cómo se está implementando la estrategia"
+      }
     }
   ],
-  "recomendacionSemanal": "Resumen ejecutivo para el equipo comercial sobre qué precios actualizar",
+  "recomendacionSemanal": "Resumen ejecutivo para el equipo comercial sobre qué precios actualizar y bandas de negociación",
+  "analisisImplementacion": {
+    "resumen": "Evaluación global de cómo se está implementando la estrategia de precios",
+    "productosDestacados": ["productos donde la implementación es excelente"],
+    "productosMejorar": ["productos donde hay oportunidad de mejora"],
+    "accionesSugeridas": ["1-3 acciones concretas para mejorar la implementación"]
+  },
   "alertasGenerales": ["alertas importantes"]
-}`;
+}
+
+IMPORTANTE:
+1. Para cada segmento, el vendedor puede negociar DENTRO de la banda (precioMinimo - precioMaximo), con precioMeta como precio inicial de oferta.
+2. La evaluación de implementación compara el precio promedio vendido vs la mediana del mercado:
+   - excelente: vendiendo a 75-95% de mediana (dentro de bandas HORECA-ConsumidorFinal)
+   - bueno: vendiendo a 65-75% de mediana (banda Supermercados)
+   - aceptable: vendiendo a 55-65% de mediana (banda Institucional)
+   - bajo: vendiendo a 45-55% de mediana (banda Mayorista - EVITAR)
+   - critico: vendiendo a <45% de mediana (perdiendo margen)
+   - sin_datos: no hay ventas registradas esta semana`;
 
   const userPrompt = `ANÁLISIS DE PRECIOS - ${new Date().toISOString().split('T')[0]}
 
@@ -1173,6 +1599,16 @@ PRECIOS B2B CALCULADOS (antes de tu análisis):
   - Supermercados (68%): Gs. ${p.calculatedPrices.supermercados.toLocaleString()} → Margen: ${p.margins.supermercados}%
   - Institucional (60%): Gs. ${p.calculatedPrices.institucional.toLocaleString()} → Margen: ${p.margins.institucional}%
 
+📈 VENTAS REALES HIDROBIO (últimos 7 días):
+${p.actualSales ? `  - Precio promedio vendido: Gs. ${p.actualSales.avgPrice.toLocaleString()}
+  - % vs Mediana Mercado: ${(p.actualSales.avgPrice / p.marketMedian * 100).toFixed(1)}%
+  - Rango de precios vendidos: Gs. ${p.actualSales.minPrice.toLocaleString()} - Gs. ${p.actualSales.maxPrice.toLocaleString()}
+  - Dispersión de precios: Gs. ${p.actualSales.priceSpread?.toLocaleString() || '0'} (max-min)
+  - Cantidad vendida: ${p.actualSales.totalQty} ${p.unit}
+  - Clientes: ${p.actualSales.customerCount || 1}
+  - Facturas: ${p.actualSales.transactionCount || p.actualSales.invoiceCount}
+  - Ingresos totales: Gs. ${p.actualSales.totalRevenue?.toLocaleString() || 'N/A'}` : '  - Sin datos de ventas esta semana'}
+
 ${p.alerts.length > 0 ? `⚠️ ALERTAS: ${p.alerts.join('; ')}` : ''}
 `).join('\n')}
 
@@ -1186,7 +1622,12 @@ TAREA:
 1. Revisa los precios calculados y valida si son coherentes
 2. Ajusta si hay violaciones del piso absoluto o márgenes insuficientes
 3. Genera recomendaciones finales para que el equipo actualice la Calculadora de Precios
-4. Identifica alertas o tendencias importantes`;
+4. Identifica alertas o tendencias importantes
+5. ANÁLISIS DE IMPLEMENTACIÓN: Compara los precios REALMENTE vendidos vs nuestra estrategia:
+   - ¿Estamos vendiendo dentro de las bandas recomendadas?
+   - ¿A qué segmento corresponden los precios que estamos vendiendo?
+   - ¿Hay oportunidad de subir precios sin perder clientes?
+   - Si el precio promedio vendido es muy bajo vs la mediana, ¿estamos regalando margen?`;
 
   try {
     console.log('[Aurelio] Iniciando análisis con Claude...');
@@ -1200,7 +1641,12 @@ TAREA:
       system: systemPrompt
     });
 
-    const content = response.content[0].text;
+    let content = response.content[0].text;
+
+    // Strip markdown code blocks if present (```json ... ```)
+    if (content.includes('```')) {
+      content = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    }
 
     // Parse JSON response
     try {
@@ -1303,18 +1749,25 @@ async function sendEmailReport(analysis, todayPrices) {
 
       if (prod.preciosRecomendadosHidroBio) {
         const precios = prod.preciosRecomendadosHidroBio;
-        console.log(`     PRECIOS B2B RECOMENDADOS:`);
+        console.log(`     BANDAS DE PRECIOS B2B (Mín - Meta - Máx):`);
+        const formatBand = (seg) => {
+          if (!seg) return 'N/A';
+          const min = seg.precioMinimo || seg.precio;
+          const meta = seg.precioMeta || seg.precio;
+          const max = seg.precioMaximo || seg.precio;
+          return `Gs. ${min?.toLocaleString()} - ${meta?.toLocaleString()} - ${max?.toLocaleString()} (margen ${seg.margen})`;
+        };
         if (precios.consumidorFinal) {
-          console.log(`       → Consumidor Final: Gs. ${precios.consumidorFinal.precio?.toLocaleString()} (margen ${precios.consumidorFinal.margen})`);
+          console.log(`       → Consumidor Final: ${formatBand(precios.consumidorFinal)}`);
         }
         if (precios.horeca) {
-          console.log(`       → HORECA: Gs. ${precios.horeca.precio?.toLocaleString()} (margen ${precios.horeca.margen})`);
+          console.log(`       → HORECA: ${formatBand(precios.horeca)}`);
         }
         if (precios.supermercados) {
-          console.log(`       → Supermercados: Gs. ${precios.supermercados.precio?.toLocaleString()} (margen ${precios.supermercados.margen})`);
+          console.log(`       → Supermercados: ${formatBand(precios.supermercados)}`);
         }
         if (precios.institucional) {
-          console.log(`       → Institucional: Gs. ${precios.institucional.precio?.toLocaleString()} (margen ${precios.institucional.margen})`);
+          console.log(`       → Institucional: ${formatBand(precios.institucional)}`);
         }
       }
 
@@ -1326,6 +1779,62 @@ async function sendEmailReport(analysis, todayPrices) {
         for (const alert of prod.alertas) {
           console.log(`     ⚠️ ${alert}`);
         }
+      }
+    }
+  }
+
+  // Strategy Implementation Analysis
+  if (analysis.analisisImplementacion) {
+    console.log('\n' + '═'.repeat(80));
+    console.log('  📈 ANÁLISIS DE IMPLEMENTACIÓN DE ESTRATEGIA');
+    console.log('═'.repeat(80));
+
+    console.log('\n' + analysis.analisisImplementacion.resumen || 'Sin análisis disponible');
+
+    // Per-product implementation summary table
+    const productsWithSales = analysis.productos?.filter(p => p.implementacionEstrategia?.tieneVentas);
+    if (productsWithSales?.length > 0) {
+      console.log('\n┌─────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐');
+      console.log('│      PRODUCTO       │  PRECIO VEND │   % MEDIANA  │  EVALUACIÓN  │   CANTIDAD   │');
+      console.log('├─────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤');
+
+      for (const prod of productsWithSales) {
+        const impl = prod.implementacionEstrategia;
+        const name = (prod.producto || 'N/A').padEnd(19).substring(0, 19);
+        const avgPrice = impl.precioPromedioVendido ? `Gs. ${impl.precioPromedioVendido.toLocaleString()}`.padStart(12) : '     N/A    ';
+        const pctMedian = impl.porcentajeVsMediana ? impl.porcentajeVsMediana.padStart(12) : '     N/A    ';
+        const evalIcon = {
+          'excelente': '⭐ Excelente',
+          'bueno': '✅ Bueno    ',
+          'aceptable': '➖ Aceptable',
+          'bajo': '⚠️ Bajo     ',
+          'critico': '🔴 Crítico  '
+        }[impl.evaluacion] || impl.evaluacion?.padEnd(12).substring(0, 12) || '     N/A    ';
+        const qty = impl.cantidadVendida ? `${impl.cantidadVendida}`.padStart(12) : '     N/A    ';
+
+        console.log(`│ ${name} │ ${avgPrice} │ ${pctMedian} │ ${evalIcon} │ ${qty} │`);
+      }
+      console.log('└─────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘');
+    }
+
+    if (analysis.analisisImplementacion.productosDestacados?.length > 0) {
+      console.log('\n  🌟 DESTACADOS:');
+      for (const p of analysis.analisisImplementacion.productosDestacados) {
+        console.log(`     ✓ ${p}`);
+      }
+    }
+
+    if (analysis.analisisImplementacion.productosMejorar?.length > 0) {
+      console.log('\n  📌 OPORTUNIDADES DE MEJORA:');
+      for (const p of analysis.analisisImplementacion.productosMejorar) {
+        console.log(`     → ${p}`);
+      }
+    }
+
+    if (analysis.analisisImplementacion.accionesSugeridas?.length > 0) {
+      console.log('\n  🎯 ACCIONES SUGERIDAS:');
+      for (let i = 0; i < analysis.analisisImplementacion.accionesSugeridas.length; i++) {
+        console.log(`     ${i + 1}. ${analysis.analisisImplementacion.accionesSugeridas[i]}`);
       }
     }
   }
@@ -1351,43 +1860,168 @@ async function sendEmailReport(analysis, todayPrices) {
   console.log(`  Generado por Aurelio | ${new Date().toISOString()}`);
   console.log('═'.repeat(80) + '\n');
 
-  // Send email using Resend API (HTTPS - works on cloud platforms)
-  // Railway blocks SMTP, so we use Resend's REST API instead
-  const resendApiKey = process.env.RESEND_API_KEY;
+  // Send email using Zoho Mail SMTP
+  const smtpUser = process.env.ZOHO_SMTP_USER || process.env.SMTP_USER;
+  const smtpPassword = process.env.ZOHO_SMTP_PASSWORD || process.env.SMTP_PASSWORD;
+  const emailTo = process.env.EMAIL_TO || 'daniel@hidrobio.com.py';
 
-  if (resendApiKey) {
+  if (smtpUser && smtpPassword) {
     try {
-      console.log('[Aurelio] 📧 Enviando email a daniel@hidrobio.com.py via Resend...');
+      console.log(`[Aurelio] 📧 Enviando email a ${emailTo} via Zoho SMTP...`);
 
       // Generate HTML content
       const htmlContent = generateEmailHtml(analysis, todayPrices, date);
 
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${resendApiKey}`,
-          'Content-Type': 'application/json'
+      // Create Zoho SMTP transporter
+      // Using port 465 with SSL (more likely to work on cloud platforms than 587/TLS)
+      const transporter = nodemailer.createTransport({
+        host: 'smtp.zoho.com',
+        port: 465,
+        secure: true, // SSL
+        auth: {
+          user: smtpUser,
+          pass: smtpPassword
         },
-        body: JSON.stringify({
-          from: process.env.EMAIL_FROM || 'Aurelio HidroBio <onboarding@resend.dev>',
-          to: [process.env.EMAIL_TO || 'daniel.stanca@mail.com'],
-          subject: subject,
-          html: htmlContent
-        })
+        tls: {
+          rejectUnauthorized: false // Allow self-signed certs if needed
+        }
       });
 
-      const result = await response.json();
+      // Send email
+      // Use aurelio@hidrobio.com.py as sender if configured as alias in Zoho Mail
+      const emailFrom = process.env.EMAIL_FROM || smtpUser;
+      const info = await transporter.sendMail({
+        from: `"Aurelio - HidroBio" <${emailFrom}>`,
+        to: emailTo,
+        subject: subject,
+        html: htmlContent,
+        text: generatePlainTextReport(analysis) // Fallback plain text
+      });
 
-      if (response.ok && result.id) {
-        console.log(`[Aurelio] ✅ Email enviado via Resend (ID: ${result.id})`);
-      } else {
-        console.error('[Aurelio] ❌ Error Resend API:', JSON.stringify(result));
-      }
+      console.log(`[Aurelio] ✅ Email enviado exitosamente (Message ID: ${info.messageId})`);
+
     } catch (error) {
-      console.error('[Aurelio] ❌ Error enviando email:', error.message);
+      console.error('[Aurelio] ❌ Error enviando email via SMTP:', error.message);
+
+      // If SMTP fails, try Zoho Mail API as fallback (if configured)
+      await tryZohoMailApi(subject, generateEmailHtml(analysis, todayPrices, date), emailTo);
     }
   } else {
-    console.log('[Aurelio] ℹ️ Email no configurado (agregar RESEND_API_KEY a las variables de entorno)');
+    console.log('[Aurelio] ℹ️ Email no configurado. Agregar a variables de entorno:');
+    console.log('           ZOHO_SMTP_USER=daniel@hidrobio.com.py');
+    console.log('           ZOHO_SMTP_PASSWORD=<app-password>');
+  }
+}
+
+/**
+ * Generate plain text version of the report for email
+ */
+function generatePlainTextReport(analysis) {
+  let text = `AURELIO - REPORTE DE PRECIOS HIDROBIO\n`;
+  text += `${'='.repeat(50)}\n\n`;
+
+  text += `RESUMEN EJECUTIVO:\n`;
+  text += `${analysis.resumenEjecutivo || 'Sin resumen disponible'}\n\n`;
+
+  if (analysis.productos && analysis.productos.length > 0) {
+    text += `PRECIOS RECOMENDADOS:\n`;
+    text += `${'-'.repeat(30)}\n`;
+
+    for (const prod of analysis.productos) {
+      text += `\n${prod.producto}\n`;
+      text += `  Mediana Mercado: Gs. ${prod.medianaSupermercados?.toLocaleString() || 'N/A'}\n`;
+
+      if (prod.preciosRecomendadosHidroBio) {
+        const p = prod.preciosRecomendadosHidroBio;
+        const getPrice = (seg) => seg?.precioMeta || seg?.precio;
+        if (p.consumidorFinal) text += `  → Consumidor Final: Gs. ${getPrice(p.consumidorFinal)?.toLocaleString()}\n`;
+        if (p.horeca) text += `  → HORECA: Gs. ${getPrice(p.horeca)?.toLocaleString()}\n`;
+        if (p.supermercados) text += `  → Supermercados: Gs. ${getPrice(p.supermercados)?.toLocaleString()}\n`;
+        if (p.institucional) text += `  → Institucional: Gs. ${getPrice(p.institucional)?.toLocaleString()}\n`;
+      }
+    }
+  }
+
+  if (analysis.recomendacionSemanal) {
+    text += `\nRECOMENDACIÓN SEMANAL:\n`;
+    text += `${analysis.recomendacionSemanal}\n`;
+  }
+
+  text += `\n${'='.repeat(50)}\n`;
+  text += `Generado por Aurelio - HidroBio S.A.\n`;
+
+  return text;
+}
+
+/**
+ * Fallback: Try sending via Zoho Mail API (requires ZohoMail.messages.CREATE scope)
+ */
+async function tryZohoMailApi(subject, htmlContent, toEmail) {
+  const credentials = loadZohoCredentials();
+
+  if (!credentials.ZOHO_REFRESH_TOKEN) {
+    console.log('[Aurelio] ℹ️ Zoho Mail API fallback no disponible (sin credenciales OAuth)');
+    return false;
+  }
+
+  try {
+    console.log('[Aurelio] 🔄 Intentando envío via Zoho Mail API...');
+
+    const accessToken = await getZohoAccessToken(credentials);
+
+    // First, get the account ID
+    const accountsResponse = await fetch('https://mail.zoho.com/api/accounts', {
+      headers: {
+        'Authorization': `Zoho-oauthtoken ${accessToken}`,
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!accountsResponse.ok) {
+      const errorText = await accountsResponse.text();
+      console.log('[Aurelio] ⚠️ Zoho Mail API no disponible (scope ZohoMail.messages.CREATE no configurado)');
+      console.log(`[Aurelio]    Error: ${errorText.substring(0, 200)}`);
+      return false;
+    }
+
+    const accountsData = await accountsResponse.json();
+    const accountId = accountsData.data?.[0]?.accountId;
+
+    if (!accountId) {
+      console.log('[Aurelio] ⚠️ No se encontró cuenta de Zoho Mail');
+      return false;
+    }
+
+    // Send email
+    const sendResponse = await fetch(`https://mail.zoho.com/api/accounts/${accountId}/messages`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Zoho-oauthtoken ${accessToken}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        fromAddress: process.env.ZOHO_SMTP_USER || 'daniel@hidrobio.com.py',
+        toAddress: toEmail,
+        subject: subject,
+        content: htmlContent,
+        mailFormat: 'html'
+      })
+    });
+
+    if (sendResponse.ok) {
+      const result = await sendResponse.json();
+      console.log(`[Aurelio] ✅ Email enviado via Zoho Mail API`);
+      return true;
+    } else {
+      const errorText = await sendResponse.text();
+      console.error('[Aurelio] ❌ Error Zoho Mail API:', errorText.substring(0, 200));
+      return false;
+    }
+
+  } catch (error) {
+    console.error('[Aurelio] ❌ Error en Zoho Mail API fallback:', error.message);
+    return false;
   }
 }
 
@@ -1401,6 +2035,120 @@ function formatPriceWithMargin(obj) {
   if (!obj || !obj.precio) return '     N/A    ';
   const str = obj.precio.toLocaleString();
   return str.padStart(12).substring(0, 12);
+}
+
+/**
+ * Generate HTML for Strategy Implementation Analysis section
+ */
+function generateStrategyImplementationHtml(analysis) {
+  if (!analysis.analisisImplementacion) return '';
+
+  const productsWithSales = analysis.productos?.filter(p => p.implementacionEstrategia?.tieneVentas) || [];
+
+  // Build products table
+  let productsTableHtml = '';
+  if (productsWithSales.length === 0) {
+    productsTableHtml = '<p style="color: #7B1FA2;">Sin datos de ventas esta semana para analizar.</p>';
+  } else {
+    const rows = productsWithSales.map((prod, i) => {
+      const impl = prod.implementacionEstrategia;
+      const evalColor =
+        impl.evaluacion === 'excelente' ? '#4CAF50' :
+        impl.evaluacion === 'bueno' ? '#8BC34A' :
+        impl.evaluacion === 'aceptable' ? '#FFC107' :
+        impl.evaluacion === 'bajo' ? '#FF9800' :
+        impl.evaluacion === 'critico' ? '#F44336' : '#9E9E9E';
+      const evalLabel =
+        impl.evaluacion === 'excelente' ? '⭐ Excelente' :
+        impl.evaluacion === 'bueno' ? '✅ Bueno' :
+        impl.evaluacion === 'aceptable' ? '➖ Aceptable' :
+        impl.evaluacion === 'bajo' ? '⚠️ Bajo' :
+        impl.evaluacion === 'critico' ? '🔴 Crítico' : impl.evaluacion || 'N/A';
+      const bgColor = i % 2 === 0 ? '#FCE4EC' : '#F8BBD9';
+
+      return `
+        <tr style="background: ${bgColor};">
+          <td style="padding: 10px; border: 1px solid #E1BEE7;"><strong>${prod.producto}</strong></td>
+          <td style="padding: 10px; border: 1px solid #E1BEE7; text-align: right;">Gs. ${impl.precioPromedioVendido?.toLocaleString() || 'N/A'}</td>
+          <td style="padding: 10px; border: 1px solid #E1BEE7; text-align: center; font-weight: bold;">${impl.porcentajeVsMediana || 'N/A'}</td>
+          <td style="padding: 10px; border: 1px solid #E1BEE7; text-align: center;">
+            <span style="background: ${evalColor}; color: white; padding: 3px 8px; border-radius: 4px; font-size: 12px;">
+              ${evalLabel}
+            </span>
+          </td>
+          <td style="padding: 10px; border: 1px solid #E1BEE7; text-align: right;">${impl.cantidadVendida?.toLocaleString() || 'N/A'}</td>
+        </tr>
+      `;
+    }).join('');
+
+    productsTableHtml = `
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px;">
+        <tr style="background: #CE93D8; color: white;">
+          <th style="padding: 10px; border: 1px solid #BA68C8; text-align: left;">Producto</th>
+          <th style="padding: 10px; border: 1px solid #BA68C8; text-align: right;">Precio Vendido</th>
+          <th style="padding: 10px; border: 1px solid #BA68C8; text-align: center;">% Mediana</th>
+          <th style="padding: 10px; border: 1px solid #BA68C8; text-align: center;">Evaluación</th>
+          <th style="padding: 10px; border: 1px solid #BA68C8; text-align: right;">Cantidad</th>
+        </tr>
+        ${rows}
+      </table>
+    `;
+  }
+
+  // Build destacados section
+  const destacadosHtml = analysis.analisisImplementacion.productosDestacados?.length > 0 ? `
+    <div style="flex: 1; min-width: 250px; background: #E8F5E9; border-radius: 8px; padding: 15px; border-left: 4px solid #4CAF50;">
+      <h4 style="color: #2E7D32; margin: 0 0 10px;">🌟 Productos Destacados</h4>
+      <ul style="margin: 0; padding-left: 20px; color: #1B5E20;">
+        ${analysis.analisisImplementacion.productosDestacados.map(p => `<li style="margin: 5px 0;">${p}</li>`).join('')}
+      </ul>
+    </div>
+  ` : '';
+
+  // Build mejorar section
+  const mejorarHtml = analysis.analisisImplementacion.productosMejorar?.length > 0 ? `
+    <div style="flex: 1; min-width: 250px; background: #FFF3E0; border-radius: 8px; padding: 15px; border-left: 4px solid #FF9800;">
+      <h4 style="color: #E65100; margin: 0 0 10px;">📌 Oportunidades de Mejora</h4>
+      <ul style="margin: 0; padding-left: 20px; color: #BF360C;">
+        ${analysis.analisisImplementacion.productosMejorar.map(p => `<li style="margin: 5px 0;">${p}</li>`).join('')}
+      </ul>
+    </div>
+  ` : '';
+
+  // Build acciones section
+  const accionesHtml = analysis.analisisImplementacion.accionesSugeridas?.length > 0 ? `
+    <div style="margin-top: 20px; background: white; border-radius: 8px; padding: 15px; border: 2px solid #9C27B0;">
+      <h4 style="color: #7B1FA2; margin: 0 0 10px;">🎯 Acciones Sugeridas</h4>
+      <ol style="margin: 0; padding-left: 25px; color: #4A148C;">
+        ${analysis.analisisImplementacion.accionesSugeridas.map(a => `<li style="margin: 8px 0;">${a}</li>`).join('')}
+      </ol>
+    </div>
+  ` : '';
+
+  return `
+  <div style="margin-top: 30px; border: 2px solid #9C27B0; border-radius: 12px; overflow: hidden;">
+    <div style="background: linear-gradient(135deg, #7B1FA2, #9C27B0); color: white; padding: 20px;">
+      <h2 style="margin: 0; font-size: 22px;">📈 Análisis de Implementación de Estrategia</h2>
+      <p style="margin: 5px 0 0; opacity: 0.9; font-size: 14px;">Comparación Ventas HidroBio vs Precios de Mercado</p>
+    </div>
+    <div style="padding: 20px; background: #F3E5F5;">
+      ${analysis.analisisImplementacion.resumen ? `
+      <p style="font-size: 15px; color: #4A148C; margin-bottom: 20px; line-height: 1.6;">
+        ${analysis.analisisImplementacion.resumen}
+      </p>
+      ` : ''}
+
+      ${productsTableHtml}
+
+      <div style="display: flex; flex-wrap: wrap; gap: 20px;">
+        ${destacadosHtml}
+        ${mejorarHtml}
+      </div>
+
+      ${accionesHtml}
+    </div>
+  </div>
+  `;
 }
 
 function generateEmailHtml(analysis, todayPrices, date) {
@@ -1436,8 +2184,8 @@ function generateEmailHtml(analysis, todayPrices, date) {
         </tr>
         ${prices.map(p => `
         <tr>
-          <td style="padding: 8px; border: 1px solid #ddd;">${p.name}</td>
-          <td style="padding: 8px; border: 1px solid #ddd; text-align: right; font-weight: bold;">${p.price?.toLocaleString()}</td>
+          <td style="padding: 8px; border: 1px solid #ddd;">${p.product_name_raw || p.product || 'N/A'}</td>
+          <td style="padding: 8px; border: 1px solid #ddd; text-align: right; font-weight: bold;">${(p.price_guaranies || p.price || 0).toLocaleString()}</td>
           <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${p.unit || 'kg'}</td>
         </tr>
         `).join('')}
@@ -1483,56 +2231,136 @@ function generateEmailHtml(analysis, todayPrices, date) {
           </div>
         </div>
 
-        <h4 style="color: #2E7D32; margin: 15px 0 10px;">💰 PRECIOS B2B RECOMENDADOS</h4>
-        <table style="width: 100%; border-collapse: collapse;">
+        <h4 style="color: #2E7D32; margin: 15px 0 10px;">💰 BANDAS DE PRECIOS B2B (Negociación)</h4>
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
           <tr style="background: #E8F5E9;">
-            <th style="padding: 10px; border: 1px solid #C8E6C9; text-align: left;">Segmento</th>
-            <th style="padding: 10px; border: 1px solid #C8E6C9; text-align: right;">Precio (Gs.)</th>
-            <th style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">Margen</th>
+            <th style="padding: 8px; border: 1px solid #C8E6C9; text-align: left;">Segmento</th>
+            <th style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #D32F2F;">Mínimo</th>
+            <th style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #2E7D32; font-weight: bold;">Meta</th>
+            <th style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #1565C0;">Máximo</th>
+            <th style="padding: 8px; border: 1px solid #C8E6C9; text-align: center;">Margen</th>
           </tr>
           <tr>
-            <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐⭐⭐⭐ Consumidor Final (90%)</td>
-            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: right; font-weight: bold;">
-              ${precios.consumidorFinal?.precio?.toLocaleString() || 'N/A'}
+            <td style="padding: 8px; border: 1px solid #C8E6C9;">⭐⭐⭐⭐⭐ Consumidor Final</td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #D32F2F;">
+              ${(precios.consumidorFinal?.precioMinimo || precios.consumidorFinal?.precio)?.toLocaleString() || 'N/A'}
             </td>
-            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; font-weight: bold; background: #E8F5E9;">
+              ${(precios.consumidorFinal?.precioMeta || precios.consumidorFinal?.precio)?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #1565C0;">
+              ${(precios.consumidorFinal?.precioMaximo || precios.consumidorFinal?.precio)?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center;">
               ${precios.consumidorFinal?.margen || 'N/A'}
             </td>
           </tr>
-          <tr style="background: #F1F8E9;">
-            <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐⭐⭐ HORECA (75%)</td>
-            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: right; font-weight: bold;">
-              ${precios.horeca?.precio?.toLocaleString() || 'N/A'}
+          <tr style="background: #FAFAFA;">
+            <td style="padding: 8px; border: 1px solid #C8E6C9;">⭐⭐⭐⭐ HORECA</td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #D32F2F;">
+              ${(precios.horeca?.precioMinimo || precios.horeca?.precio)?.toLocaleString() || 'N/A'}
             </td>
-            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; font-weight: bold; background: #E8F5E9;">
+              ${(precios.horeca?.precioMeta || precios.horeca?.precio)?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #1565C0;">
+              ${(precios.horeca?.precioMaximo || precios.horeca?.precio)?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center;">
               ${precios.horeca?.margen || 'N/A'}
             </td>
           </tr>
           <tr>
-            <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐⭐ Supermercados (68%)</td>
-            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: right; font-weight: bold;">
-              ${precios.supermercados?.precio?.toLocaleString() || 'N/A'}
+            <td style="padding: 8px; border: 1px solid #C8E6C9;">⭐⭐⭐ Supermercados</td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #D32F2F;">
+              ${(precios.supermercados?.precioMinimo || precios.supermercados?.precio)?.toLocaleString() || 'N/A'}
             </td>
-            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; font-weight: bold; background: #E8F5E9;">
+              ${(precios.supermercados?.precioMeta || precios.supermercados?.precio)?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #1565C0;">
+              ${(precios.supermercados?.precioMaximo || precios.supermercados?.precio)?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center;">
               ${precios.supermercados?.margen || 'N/A'}
             </td>
           </tr>
-          <tr style="background: #F1F8E9;">
-            <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐ Institucional (60%)</td>
-            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: right; font-weight: bold;">
-              ${precios.institucional?.precio?.toLocaleString() || 'N/A'}
+          <tr style="background: #FAFAFA;">
+            <td style="padding: 8px; border: 1px solid #C8E6C9;">⭐⭐ Institucional</td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #D32F2F;">
+              ${(precios.institucional?.precioMinimo || precios.institucional?.precio)?.toLocaleString() || 'N/A'}
             </td>
-            <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; font-weight: bold; background: #E8F5E9;">
+              ${(precios.institucional?.precioMeta || precios.institucional?.precio)?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center; color: #1565C0;">
+              ${(precios.institucional?.precioMaximo || precios.institucional?.precio)?.toLocaleString() || 'N/A'}
+            </td>
+            <td style="padding: 8px; border: 1px solid #C8E6C9; text-align: center;">
               ${precios.institucional?.margen || 'N/A'}
             </td>
           </tr>
         </table>
+        <p style="font-size: 11px; color: #666; margin-top: 5px;">
+          <strong>Rojo</strong> = Precio mínimo (walk-away) | <strong>Verde</strong> = Precio meta (inicial) | <strong>Azul</strong> = Precio máximo (premium)
+        </p>
 
         ${prod.comentario ? `
         <div style="background: #E3F2FD; padding: 10px; margin-top: 15px; border-radius: 4px;">
           💡 <em>${prod.comentario}</em>
         </div>
         ` : ''}
+
+        ${prod.implementacionEstrategia?.tieneVentas ? `
+        <div style="margin-top: 15px; border: 1px solid #9C27B0; border-radius: 8px; overflow: hidden;">
+          <div style="background: #9C27B0; color: white; padding: 8px 12px; font-size: 13px;">
+            📈 Ventas HidroBio (última semana)
+          </div>
+          <div style="padding: 12px; background: #F3E5F5;">
+            <div style="display: flex; flex-wrap: wrap; gap: 15px;">
+              <div style="flex: 1; min-width: 100px;">
+                <div style="color: #7B1FA2; font-size: 11px; font-weight: bold;">PRECIO PROMEDIO</div>
+                <div style="font-size: 18px; font-weight: bold;">Gs. ${prod.implementacionEstrategia.precioPromedioVendido?.toLocaleString() || 'N/A'}</div>
+              </div>
+              <div style="flex: 1; min-width: 100px;">
+                <div style="color: #7B1FA2; font-size: 11px; font-weight: bold;">% DE MEDIANA</div>
+                <div style="font-size: 18px; font-weight: bold;">${prod.implementacionEstrategia.porcentajeVsMediana || 'N/A'}</div>
+              </div>
+              <div style="flex: 1; min-width: 100px;">
+                <div style="color: #7B1FA2; font-size: 11px; font-weight: bold;">CANTIDAD</div>
+                <div style="font-size: 18px; font-weight: bold;">${prod.implementacionEstrategia.cantidadVendida?.toLocaleString() || 'N/A'}</div>
+              </div>
+              <div style="flex: 1; min-width: 100px;">
+                <div style="color: #7B1FA2; font-size: 11px; font-weight: bold;">EVALUACIÓN</div>
+                <div style="font-size: 16px; font-weight: bold; padding: 2px 8px; border-radius: 4px; display: inline-block; ${
+                  prod.implementacionEstrategia.evaluacion === 'excelente' ? 'background: #4CAF50; color: white;' :
+                  prod.implementacionEstrategia.evaluacion === 'bueno' ? 'background: #8BC34A; color: white;' :
+                  prod.implementacionEstrategia.evaluacion === 'aceptable' ? 'background: #FFC107; color: #333;' :
+                  prod.implementacionEstrategia.evaluacion === 'bajo' ? 'background: #FF9800; color: white;' :
+                  prod.implementacionEstrategia.evaluacion === 'critico' ? 'background: #F44336; color: white;' :
+                  'background: #9E9E9E; color: white;'
+                }">
+                  ${prod.implementacionEstrategia.evaluacion === 'excelente' ? '⭐ Excelente' :
+                    prod.implementacionEstrategia.evaluacion === 'bueno' ? '✅ Bueno' :
+                    prod.implementacionEstrategia.evaluacion === 'aceptable' ? '➖ Aceptable' :
+                    prod.implementacionEstrategia.evaluacion === 'bajo' ? '⚠️ Bajo' :
+                    prod.implementacionEstrategia.evaluacion === 'critico' ? '🔴 Crítico' :
+                    prod.implementacionEstrategia.evaluacion || 'N/A'}
+                </div>
+              </div>
+            </div>
+            ${prod.implementacionEstrategia.comentarioImplementacion ? `
+            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #CE93D8; font-size: 13px; color: #6A1B9A;">
+              ${prod.implementacionEstrategia.comentarioImplementacion}
+            </div>
+            ` : ''}
+          </div>
+        </div>
+        ` : `
+        <div style="margin-top: 15px; background: #ECEFF1; padding: 10px; border-radius: 4px; color: #607D8B; font-size: 13px;">
+          📊 Sin datos de ventas esta semana
+        </div>
+        `}
 
         ${alertsHtml}
       </div>
@@ -1553,7 +2381,7 @@ function generateEmailHtml(analysis, todayPrices, date) {
   <!-- Header -->
   <div style="background: linear-gradient(135deg, #2E7D32, #4CAF50); color: white; padding: 30px; text-align: center; border-radius: 12px 12px 0 0;">
     <h1 style="margin: 0; font-size: 28px;">🌿 AURELIO</h1>
-    <p style="margin: 5px 0 0; font-size: 16px; opacity: 0.9;">Elite Pricing Intelligence Agent</p>
+    <p style="margin: 5px 0 0; font-size: 16px; opacity: 0.9;">Inteligencia de Precios - HidroBio</p>
     <p style="margin: 15px 0 0; font-size: 14px; background: rgba(255,255,255,0.2); display: inline-block; padding: 5px 15px; border-radius: 20px;">
       📅 ${date}
     </p>
@@ -1589,6 +2417,9 @@ function generateEmailHtml(analysis, todayPrices, date) {
   </h2>
   ${productCardsHtml}
 
+  <!-- Strategy Implementation Analysis -->
+  ${generateStrategyImplementationHtml(analysis)}
+
   <!-- General Alerts -->
   ${analysis.alertasGenerales?.length > 0 ? `
   <div style="background: #FFF3E0; border: 1px solid #FFB74D; border-radius: 8px; padding: 20px; margin: 20px 0;">
@@ -1622,7 +2453,7 @@ function generateEmailHtml(analysis, todayPrices, date) {
   <!-- Footer -->
   <div style="text-align: center; margin-top: 30px; padding: 20px; background: #F5F5F5; border-radius: 8px;">
     <p style="margin: 0; color: #666; font-size: 12px;">
-      🌿 Generado por <strong>Aurelio</strong> - Sistema de Inteligencia de Precios<br>
+      🌿 Generado por <strong>Aurelio</strong> - Inteligencia de Precios<br>
       <strong>HidroBio S.A.</strong> | Nueva Italia, Paraguay<br>
       ${new Date().toLocaleString('es-PY', { dateStyle: 'full', timeStyle: 'long' })}
     </p>
@@ -1637,9 +2468,144 @@ function generateEmailHtml(analysis, todayPrices, date) {
 // MAIN AGENT LOOP
 // =============================================================================
 
+/**
+ * Run Aurelio in scrape-only mode (daily at 05:00)
+ * Just collects prices and saves to DB, alerts on errors
+ */
+async function runScrapingOnly() {
+  loadEnvCredentials();
+
+  console.log('\n' + '📊'.repeat(40));
+  console.log(`\n  AURELIO - Recolección Diaria de Precios`);
+  console.log(`  HidroBio S.A. | ${new Date().toLocaleString('es-PY')}`);
+  console.log('\n' + '📊'.repeat(40) + '\n');
+
+  const db = new PriceDatabase();
+  let errorCount = 0;
+  const allPrices = [];
+
+  try {
+    console.log('[Aurelio] 📡 Recolectando precios del mercado...');
+
+    for (const supermarket of CONFIG.supermarkets) {
+      if (!supermarket.enabled) continue;
+
+      console.log(`[Aurelio]   → Escaneando ${supermarket.name}...`);
+      const scraper = SCRAPERS[supermarket.scraper];
+
+      if (!scraper) {
+        console.log(`[Aurelio]   ⚠️ No hay scraper para ${supermarket.name}`);
+        errorCount++;
+        continue;
+      }
+
+      for (const product of CONFIG.products) {
+        for (const term of product.searchTerms) {
+          try {
+            const results = await scraper(supermarket, term);
+            for (const result of results) {
+              if (productMatches(result.name, term)) {
+                const isDupe = allPrices.some(p =>
+                  p.supermarket === result.supermarket &&
+                  p.name === result.name &&
+                  p.product === product.name
+                );
+                if (!isDupe) {
+                  allPrices.push({ ...result, product: product.name, unit: product.unit });
+                }
+              }
+            }
+          } catch (error) {
+            console.error(`[Aurelio]   ❌ Error "${term}" en ${supermarket.name}:`, error.message);
+            errorCount++;
+          }
+        }
+      }
+    }
+
+    console.log(`[Aurelio] ✅ Recolectados ${allPrices.length} precios`);
+
+    // Save to database
+    console.log('[Aurelio] 💾 Guardando en base de datos...');
+    for (const price of allPrices) {
+      db.savePrice(price.supermarket, price.product, price.price, price.name, price.unit);
+    }
+
+    // Sync to Zoho Analytics
+    console.log('[Aurelio] ☁️ Sincronizando con Zoho Analytics...');
+    await syncToZohoAnalytics(db);
+
+    // Alert if errors occurred
+    if (errorCount > 0) {
+      console.log(`[Aurelio] ⚠️ ${errorCount} errores durante recolección`);
+      db.saveAlert('scraping', `${errorCount} errores durante recolección diaria`, 'warning');
+      await sendErrorAlert(errorCount, allPrices.length);
+    }
+
+    console.log(`\n[Aurelio] ✅ Recolección diaria completada (${allPrices.length} precios)\n`);
+
+  } catch (error) {
+    console.error('[Aurelio] ❌ Error crítico en recolección:', error);
+    db.saveAlert('system', `Error crítico: ${error.message}`, 'error');
+    await sendErrorAlert(1, 0, error.message);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Send error alert email when scraping fails
+ */
+async function sendErrorAlert(errorCount, pricesCollected, criticalError = null) {
+  const credentials = loadZohoCredentials();
+  if (!credentials.ZOHO_SMTP_USER || !credentials.ZOHO_SMTP_PASSWORD) return;
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.zoho.com',
+    port: 465,
+    secure: true,
+    auth: { user: credentials.ZOHO_SMTP_USER, password: credentials.ZOHO_SMTP_PASSWORD }
+  });
+
+  const subject = criticalError
+    ? `🚨 [Aurelio] ERROR CRÍTICO - ${new Date().toLocaleDateString('es-PY')}`
+    : `⚠️ [Aurelio] Alertas en Recolección - ${new Date().toLocaleDateString('es-PY')}`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; padding: 20px;">
+      <h2 style="color: ${criticalError ? '#dc3545' : '#ffc107'};">${criticalError ? '🚨 Error Crítico' : '⚠️ Alertas de Recolección'}</h2>
+      <p><strong>Fecha:</strong> ${new Date().toLocaleString('es-PY')}</p>
+      ${criticalError ? `<p><strong>Error:</strong> ${criticalError}</p>` : ''}
+      <p><strong>Errores encontrados:</strong> ${errorCount}</p>
+      <p><strong>Precios recolectados:</strong> ${pricesCollected}</p>
+      <hr>
+      <p style="color: #666; font-size: 12px;">Aurelio - Inteligencia de Precios | HidroBio S.A.</p>
+    </div>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"Aurelio - HidroBio" <${credentials.EMAIL_FROM || credentials.ZOHO_SMTP_USER}>`,
+      to: credentials.EMAIL_TO || 'daniel@hidrobio.com.py',
+      subject,
+      html
+    });
+    console.log('[Aurelio] 📧 Alerta enviada por email');
+  } catch (error) {
+    console.error('[Aurelio] ❌ Error enviando alerta:', error.message);
+  }
+}
+
+/**
+ * Run Aurelio full analysis mode (weekly Thursday 15:00)
+ * Scrapes, analyzes, compares with sales, and sends full report
+ */
 async function runAurelio() {
+  // Load credentials from .env file
+  loadEnvCredentials();
+
   console.log('\n' + '🌿'.repeat(40));
-  console.log(`\n  AURELIO - Elite Pricing Intelligence Agent`);
+  console.log(`\n  AURELIO - Análisis Semanal de Precios`);
   console.log(`  HidroBio S.A. | ${new Date().toLocaleString('es-PY')}`);
   console.log('\n' + '🌿'.repeat(40) + '\n');
 
@@ -1753,30 +2719,67 @@ async function runAurelio() {
 // SCHEDULER
 // =============================================================================
 
-function scheduleNextRun() {
+/**
+ * Calculate next scheduled run time
+ * Returns { type: 'daily'|'weekly', time: Date }
+ */
+function getNextScheduledRun() {
   const now = new Date();
-  const targetHour = CONFIG.schedule.hour;
-  const targetMinute = CONFIG.schedule.minute;
+  const dailyConfig = CONFIG.schedule.dailyScrape;
+  const weeklyConfig = CONFIG.schedule.weeklyAnalysis;
 
-  // Calculate next run time
-  let nextRun = new Date(now);
-  nextRun.setHours(targetHour, targetMinute, 0, 0);
-
-  // If we've already passed the target time today, schedule for tomorrow
-  if (now >= nextRun) {
-    nextRun.setDate(nextRun.getDate() + 1);
+  // Calculate next daily scrape (05:00 every day)
+  let nextDaily = new Date(now);
+  nextDaily.setHours(dailyConfig.hour, dailyConfig.minute, 0, 0);
+  if (now >= nextDaily) {
+    nextDaily.setDate(nextDaily.getDate() + 1);
   }
 
-  const msUntilRun = nextRun.getTime() - now.getTime();
+  // Calculate next weekly analysis (Thursday 15:00)
+  let nextWeekly = new Date(now);
+  nextWeekly.setHours(weeklyConfig.hour, weeklyConfig.minute, 0, 0);
+
+  // Find next Thursday
+  const daysUntilThursday = (weeklyConfig.dayOfWeek - now.getDay() + 7) % 7;
+  if (daysUntilThursday === 0 && now >= nextWeekly) {
+    // It's Thursday but we've passed the time, schedule for next week
+    nextWeekly.setDate(nextWeekly.getDate() + 7);
+  } else {
+    nextWeekly.setDate(nextWeekly.getDate() + daysUntilThursday);
+  }
+
+  // Return whichever is sooner
+  if (nextDaily < nextWeekly) {
+    return { type: 'daily', time: nextDaily };
+  } else {
+    return { type: 'weekly', time: nextWeekly };
+  }
+}
+
+function scheduleNextRun() {
+  const nextRun = getNextScheduledRun();
+  const now = new Date();
+
+  const msUntilRun = nextRun.time.getTime() - now.getTime();
   const hoursUntil = Math.floor(msUntilRun / (1000 * 60 * 60));
   const minutesUntil = Math.floor((msUntilRun % (1000 * 60 * 60)) / (1000 * 60));
 
-  console.log(`[Aurelio] ⏰ Próxima ejecución programada: ${nextRun.toLocaleString('es-PY')}`);
+  const dayNames = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const dayName = dayNames[nextRun.time.getDay()];
+
+  const typeLabel = nextRun.type === 'daily' ? '📊 Recolección Diaria' : '📧 Análisis Semanal + Email';
+
+  console.log(`[Aurelio] ⏰ Próxima ejecución: ${typeLabel}`);
+  console.log(`[Aurelio]    ${dayName}, ${nextRun.time.toLocaleString('es-PY')}`);
   console.log(`[Aurelio]    (en ${hoursUntil}h ${minutesUntil}m)`);
 
   setTimeout(async () => {
-    await runAurelio();
-    scheduleNextRun();  // Schedule the next day's run
+    if (nextRun.type === 'daily') {
+      await runScrapingOnly();
+    } else {
+      await runAurelio();  // Full analysis + email
+    }
+    scheduleNextRun();  // Schedule the next run
   }, msUntilRun);
 }
 
@@ -1787,23 +2790,65 @@ function scheduleNextRun() {
 async function main() {
   const args = process.argv.slice(2);
 
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(`
+AURELIO - Inteligencia de Precios | HidroBio S.A.
+
+Uso: node aurelio.mjs [opción]
+
+Opciones:
+  --now, -n        Ejecutar análisis completo ahora (scrape + análisis + email)
+  --scrape         Solo recolectar precios (sin análisis ni email)
+  --schedule, -s   Modo programado (05:00 diario, jueves 15:00 análisis)
+  --daemon, -d     Modo daemon para Railway (programado + heartbeat)
+  --help, -h       Mostrar esta ayuda
+
+Programación:
+  - Diario 05:00 PYT: Recolección de precios (alerta si hay errores)
+  - Jueves 15:00 PYT: Análisis semanal completo + comparación ventas + email
+`);
+    return;
+  }
+
   if (args.includes('--now') || args.includes('-n')) {
-    // Run immediately
-    console.log('[Aurelio] Modo: Ejecución inmediata');
+    // Run full analysis immediately
+    console.log('[Aurelio] Modo: Análisis completo inmediato');
     await runAurelio();
+
+  } else if (args.includes('--scrape')) {
+    // Scrape only mode
+    console.log('[Aurelio] Modo: Solo recolección de precios');
+    await runScrapingOnly();
+
   } else if (args.includes('--schedule') || args.includes('-s')) {
     // Run with scheduler
-    console.log('[Aurelio] Modo: Programado (08:00 Paraguay)');
-    console.log('[Aurelio] Ejecutando análisis inicial...');
-    await runAurelio();
+    console.log('[Aurelio] Modo: Programado');
+    console.log('[Aurelio]   📊 Diario 05:00 PYT - Recolección de precios');
+    console.log('[Aurelio]   📧 Jueves 15:00 PYT - Análisis semanal + email');
+    console.log('[Aurelio] Ejecutando recolección inicial...');
+    await runScrapingOnly();
     scheduleNextRun();
-
-    // Keep process alive
     console.log('[Aurelio] 🟢 Agente en ejecución continua. Ctrl+C para detener.');
+
   } else if (args.includes('--daemon') || args.includes('-d')) {
-    // Daemon mode for Railway - run immediately then schedule
+    // Daemon mode for Railway
     console.log('[Aurelio] Modo: Daemon (Railway)');
-    await runAurelio();
+    console.log('[Aurelio]   📊 Diario 05:00 PYT - Recolección de precios');
+    console.log('[Aurelio]   📧 Jueves 15:00 PYT - Análisis semanal + email');
+
+    // Check if today is Thursday around analysis time
+    const now = new Date();
+    const isThursday = now.getDay() === 4;
+    const isAfternoon = now.getHours() >= 14 && now.getHours() <= 16;
+
+    if (isThursday && isAfternoon) {
+      console.log('[Aurelio] Es jueves por la tarde - ejecutando análisis completo...');
+      await runAurelio();
+    } else {
+      console.log('[Aurelio] Ejecutando recolección inicial...');
+      await runScrapingOnly();
+    }
+
     scheduleNextRun();
 
     // Keep alive with heartbeat
@@ -1812,8 +2857,8 @@ async function main() {
     }, 3600000);  // Every hour
 
   } else {
-    // Default: run once
-    console.log('[Aurelio] Modo: Ejecución única');
+    // Default: run full analysis once
+    console.log('[Aurelio] Modo: Ejecución única (análisis completo)');
     await runAurelio();
   }
 }

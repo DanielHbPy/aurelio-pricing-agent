@@ -97,19 +97,22 @@ railway init
 
 2. **Set environment variables in Railway dashboard:**
 ```bash
-# Zoho OAuth
+# Zoho OAuth (for Analytics sync)
 ZOHO_CLIENT_ID=xxx
 ZOHO_CLIENT_SECRET=xxx
 ZOHO_REFRESH_TOKEN=xxx
 ZOHO_DC=.com
 
-# Anthropic
+# Anthropic (for AI analysis)
 ANTHROPIC_API_KEY=xxx
 
-# Email (optional)
-SMTP_USER=daniel@hidrobio.com.py
-SMTP_PASSWORD=xxx
+# Zoho SMTP Email (for daily reports)
+ZOHO_SMTP_USER=daniel@hidrobio.com.py
+ZOHO_SMTP_PASSWORD=<zoho-app-password>
+EMAIL_TO=daniel@hidrobio.com.py
 ```
+
+**Note:** Generate the Zoho App Password at: Zoho Accounts > Security > App Passwords > Generate New Password
 
 3. **Deploy:**
 ```bash
