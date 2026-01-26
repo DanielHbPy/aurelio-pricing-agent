@@ -1460,7 +1460,7 @@ async function analyzeWithClaude(db, todayPrices) {
     }
 
     // Get actual sales data for this product
-    const salesData = weeklySales[productConfig.name] || null;
+    const salesData = weeklySales.sales?.[productConfig.name] || null;
 
     productAnalyses.push({
       product: productConfig.name,
@@ -1634,7 +1634,7 @@ TAREA:
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [
         { role: 'user', content: userPrompt }
       ],
