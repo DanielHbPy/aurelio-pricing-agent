@@ -8,6 +8,10 @@
     "start": "node aurelio.mjs --daemon",
     "run-now": "node aurelio.mjs --now",
     "schedule": "node aurelio.mjs --schedule",
+    "scrape": "node aurelio.mjs --scrape",
+    "intro": "node aurelio.mjs --intro",
+    "daily-report": "node aurelio.mjs --daily-report",
+    "weekly-report": "node aurelio.mjs --weekly-report",
     "test": "node aurelio.mjs --now"
   },
   "keywords": [

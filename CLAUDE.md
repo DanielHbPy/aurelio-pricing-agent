@@ -3,21 +3,66 @@
 **Named after Marcus Aurelius** - embodying wisdom, strategic thinking, and disciplined analysis.
 
 Aurelio is HidroBio's autonomous pricing intelligence agent that:
-1. Monitors daily supermarket consumer prices (Stock, Superseis, Casa Rica)
+1. Monitors daily supermarket consumer prices (Stock, Superseis, Casa Rica, Salemma)
 2. Calculates market medians for each product category
 3. Uses Claude AI to generate strategic B2B pricing recommendations
-4. Outputs weekly pricing guidance for updating the Calculadora de Precios
+4. Compares recommendations against actual Zoho Books sales data
+5. Outputs weekly pricing guidance for updating the Calculadora de Precios
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `aurelio.mjs` | Main entry point - Node.js scraper + Claude analysis |
-| `main.py` | Legacy Python scraper (deprecated) |
-| `scrapers/` | Python scrapers for each supermarket |
-| `utils/database.py` | SQLite price database |
-| `utils/analytics_sync.py` | Zoho Analytics sync |
+| `aurelio.mjs` | Main entry point - Node.js scraper + Claude analysis (2800+ lines) |
+| `data/aurelio.db` | SQLite database with prices, analysis, alerts |
 | `AURELIO.md` | Detailed agent documentation |
+| `AURELIO-ROADMAP.md` | Future development roadmap |
+
+## Running Aurelio
+
+### Production Commands
+
+```bash
+cd agents/aurelio
+
+# Price scraping only (runs daily at 05:00 PYT)
+npm run scrape
+
+# Full weekly analysis with AI + email report
+npm run run-now          # or: node aurelio.mjs --now
+
+# Team introduction email
+npm run intro            # Sends Aurelio introduction to team
+
+# Daily snapshot report
+npm run daily-report     # Market snapshot with prices collected
+
+# Weekly analysis report
+npm run weekly-report    # Full AI analysis + recommendations
+
+# Daemon mode (Railway deployment)
+npm start                # Scheduled: daily 05:00, weekly Thursday 15:00
+```
+
+### CLI Options
+
+```bash
+node aurelio.mjs --help     # Show all options
+node aurelio.mjs --now      # Full analysis immediately
+node aurelio.mjs --scrape   # Scrape only (no AI analysis)
+node aurelio.mjs --schedule # Run with scheduler
+node aurelio.mjs --daemon   # Daemon mode for Railway
+node aurelio.mjs --intro    # Send team introduction email
+node aurelio.mjs --daily-report   # Send daily market snapshot
+node aurelio.mjs --weekly-report  # Send weekly AI analysis
+```
+
+## Schedule (Paraguay Time - UTC-4)
+
+| Task | Schedule | Description |
+|------|----------|-------------|
+| **Daily Scrape** | 05:00 PYT | Collect prices from 4 supermarkets, save to DB |
+| **Weekly Analysis** | Thursday 15:00 PYT | Full AI analysis + Zoho Books comparison + email |
 
 ## Pricing Model
 
@@ -30,6 +75,8 @@ HidroBio sells B2B at prices calculated as **% of market median** (supermarket c
 | **S3 Supermercados** | 68% | 60% | 75% | 15% |
 | **S4 Institucional** | 60% | 55% | 65% | 10% |
 | **S5 Mayorista** | 50% | 45% | 55% | EVITAR |
+
+**Golden Rule:** The **Piso Absoluto** (floor price) is sacred - never sell below cost + minimum margin.
 
 ## Products Monitored
 
@@ -50,77 +97,95 @@ HidroBio sells B2B at prices calculated as **% of market median** (supermarket c
 | **Stock** | Active | Cheerio/Node.js | nopCommerce site |
 | **Superseis** | Active | Cheerio/Node.js | `data-product-id` attrs |
 | **Casa Rica** | Active | Cheerio/Node.js | Longer timeout |
+| **Salemma** | Active | Cheerio/Node.js | Laravel category pages |
 
-## Running Aurelio
+## Environment Variables
+
+Aurelio loads credentials from `agents/zoho-mcp/.env`:
 
 ```bash
-# Single run (testing)
-node aurelio.mjs --now
-
-# Run with scheduler (08:00 Paraguay time)
-node aurelio.mjs --schedule
-
-# Daemon mode (for Railway)
-node aurelio.mjs --daemon
-```
-
-## Railway Deployment
-
-**Environment Variables:**
-```bash
-# Zoho OAuth
+# Zoho OAuth (for Books API - sales data)
 ZOHO_CLIENT_ID=xxx
 ZOHO_CLIENT_SECRET=xxx
 ZOHO_REFRESH_TOKEN=xxx
+ZOHO_ORG_ID=862876482
 ZOHO_DC=.com
 
-# Anthropic
-ANTHROPIC_API_KEY=xxx
+# Anthropic Claude AI
+ANTHROPIC_API_KEY=sk-ant-xxx
 
-# Zoho SMTP Email
+# Email (Zoho SMTP)
 ZOHO_SMTP_USER=daniel@hidrobio.com.py
 ZOHO_SMTP_PASSWORD=<zoho-app-password>
+EMAIL_FROM=aurelio@hidrobio.com.py
 EMAIL_TO=daniel@hidrobio.com.py
 ```
 
-**Deploy:**
-```bash
-railway login
-railway init
-railway up
-```
+## Report Types
+
+### 1. Team Introduction (`--intro`)
+Beautiful HTML email introducing Aurelio to the team:
+- Explains Aurelio's purpose and capabilities
+- Shows the pricing strategy by segment
+- Displays current system status
+- Lists the work schedule
+
+### 2. Daily Report (`--daily-report`)
+Market snapshot email showing:
+- Quick stats (prices collected, supermarkets, products)
+- Market medians by product with min/max ranges
+- Prices organized by supermarket
+- Recent alerts
+
+### 3. Weekly Analysis (`--now` or `--weekly-report`)
+Comprehensive AI-powered analysis:
+- Executive summary of market conditions
+- Pricing recommendations by segment (min/target/max bands)
+- Margin calculations vs. HidroBio cost structure
+- **Strategy Implementation Analysis** - compares actual Zoho Books sales against recommendations
+- Evaluation per product (Excelente/Bueno/Aceptable/Bajo/Crítico)
+- Actionable recommendations for commercial team
 
 ## Output Example
 
 ```
 ════════════════════════════════════════════════════════════════════════════════
-  AURELIO - REPORTE DE PRECIOS PARA ACTUALIZAR CALCULADORA
-  lunes, 27 de enero de 2026
+  📊 AURELIO - REPORTE DE PRECIOS PARA ACTUALIZAR CALCULADORA
+  martes, 27 de enero de 2026
 ════════════════════════════════════════════════════════════════════════════════
+
+📝 RESUMEN EJECUTIVO:
+Mercado de tomates estable con precios consolidados alrededor de Gs. 17,950...
 
 ┌─────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┬──────────────┐
 │      PRODUCTO       │   MEDIANA    │  CONS.FINAL  │    HORECA    │  SUPERMKTS   │  INSTITUC.   │
-│                     │  (Mercado)   │    (90%)     │    (75%)     │    (68%)     │    (60%)     │
 ├─────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┼──────────────┤
-│ Tomate Lisa         │       15,200 │       13,680 │       11,400 │       10,336 │        9,120 │
-│ Locote Amarillo     │       48,500 │       43,650 │       36,375 │       32,980 │       29,100 │
-│ Lechuga Pirati      │        4,500 │        4,050 │        3,375 │        3,060 │        3,000 │
+│ Tomate Lisa         │       17,950 │       16,155 │       13,463 │       12,206 │       10,770 │
+│ Locote Amarillo     │       39,950 │       35,955 │       29,963 │       27,166 │       23,970 │
 └─────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┴──────────────┘
+
+📈 ANÁLISIS DE IMPLEMENTACIÓN DE ESTRATEGIA
+┌─────────────────────┬──────────────┬──────────────┬──────────────┬──────────────┐
+│      PRODUCTO       │  PRECIO VEND │   % MEDIANA  │  EVALUACIÓN  │   CANTIDAD   │
+├─────────────────────┼──────────────┼──────────────┼──────────────┼──────────────┤
+│ Tomate Lisa         │   Gs. 12,828 │        71.5% │ ✅ Bueno     │         1353 │
+│ Locote Amarillo     │   Gs. 27,040 │        67.7% │ ✅ Bueno     │         29.6 │
+└─────────────────────┴──────────────┴──────────────┴──────────────┴──────────────┘
 ```
 
-## Database
+## Database Schema
 
-SQLite database: `data/prices.db`
+SQLite database: `data/aurelio.db`
 
-```python
-from utils.database import PriceDatabase
-db = PriceDatabase()
-prices = db.get_today_prices()
-```
+| Table | Purpose |
+|-------|---------|
+| `prices` | Daily scraped prices (date, supermarket, product, price, unit) |
+| `analysis` | AI analysis results (median, recommendations, reasoning) |
+| `alerts` | System alerts and warnings |
 
 ## Zoho Analytics Integration
 
-Prices automatically sync to Zoho Analytics after each scraping run.
+Prices sync to Zoho Analytics after each scraping run.
 
 **Table:** `Precios Supermercados` (ID: `2849493000003555002`)
 
@@ -133,32 +198,36 @@ Prices automatically sync to Zoho Analytics after each scraping run.
 | Precio_Gs | Number | Price in Guaranies |
 | Unidad | Text | Unit (kg, unit) |
 
-**Manual Sync:**
+## Railway Deployment
+
 ```bash
-# Sync today's prices
-python3 utils/analytics_sync.py
-
-# Sync all historical data
-python3 utils/analytics_sync.py --all --truncate
-
-# Sync last 7 days
-python3 utils/analytics_sync.py --days 7
+railway login
+railway init
+railway up
 ```
 
-## Email Configuration
+The agent runs in daemon mode with:
+- Daily scraping at 05:00 PYT
+- Weekly analysis on Thursday 15:00 PYT
+- Hourly heartbeat logging
 
-- **SMTP Host:** smtp.zoho.com:587 (TLS)
-- **Sender:** daniel@hidrobio.com.py
-- **Auth:** Zoho app password (Zoho > Security > App Passwords)
+## Troubleshooting
 
-## Biggie Scraping (Chrome MCP)
+### Email not sending
+1. Check `agents/zoho-mcp/.env` has SMTP credentials
+2. Verify `ZOHO_SMTP_PASSWORD` is a Zoho app password (not account password)
+3. Check `EMAIL_TO` is set correctly
 
-Biggie requires JavaScript rendering. Use Claude Chrome MCP:
+### No prices collected
+1. Run `npm run scrape` to test scraping
+2. Check supermarket websites are accessible
+3. Review console output for errors
 
-1. Navigate to: `https://biggie.com.py/products/fruteria-y-verduleria?skip=0`
-2. Scroll through pages to find products
-3. Manually add prices to database
+### AI analysis fails
+1. Verify `ANTHROPIC_API_KEY` is set
+2. Check for rate limiting
+3. Ensure prices exist in database
 
 ---
 
-*Last updated: January 26, 2026*
+*Last updated: January 27, 2026*
