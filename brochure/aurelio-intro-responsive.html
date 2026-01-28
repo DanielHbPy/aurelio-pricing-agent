@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conoce a Aurelio - Especialista en Inteligencia de Precios | HidroBio</title>
+    <meta name="description" content="Aurelio es el agente de inteligencia de precios de HidroBio, monitoreando el mercado para optimizar ventas.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&family=Open+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --aurelio-gold: #C9A962;
+            --aurelio-gold-light: #E8D5A3;
+            --aurelio-dark: #2C3E50;
+            --aurelio-dark-light: #34495e;
+            --hidrobio-green: #4CAF50;
+            --hidrobio-green-dark: #388E3C;
+            --white: #FFFFFF;
+            --light-grey: #F8F9FA;
+            --text-dark: #1a1a1a;
+            --text-light: #666666;
+            --shadow: 0 4px 20px rgba(0,0,0,0.1);
+            --shadow-lg: 0 10px 40px rgba(0,0,0,0.15);
+        }
+
+        html {
+            scroll-behavior: smooth;
+        }
+
+        body {
+            font-family: 'Open Sans', sans-serif;
+            color: var(--text-dark);
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--aurelio-dark) 0%, #1a252f 100%);
+            padding: 1rem 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: var(--shadow);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .header-logo {
+            height: 40px;
+        }
+
+        .header-text h1 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: white;
+        }
+
+        .header-text .subtitle {
+            font-size: 0.75rem;
+            color: var(--aurelio-gold);
+        }
+
+        .header-badge {
+            background: var(--aurelio-gold);
+            color: var(--aurelio-dark);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            display: none;
+        }
+
+        /* Hero Section */
+        .hero {
+            background: linear-gradient(135deg, var(--aurelio-dark) 0%, var(--aurelio-dark-light) 100%);
+            padding: 3rem 1.5rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23C9A962' fill-opacity='0.05'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+            opacity: 0.5;
+        }
+
+        .hero-content {
+            position: relative;
+            z-index: 1;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .avatar-container {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 1.5rem;
+        }
+
+        .avatar {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            border: 4px solid var(--aurelio-gold);
+            box-shadow: var(--shadow-lg);
+            background: var(--aurelio-dark);
+            object-fit: cover;
+        }
+
+        .avatar-badge {
+            position: absolute;
+            bottom: 5px;
+            right: 5px;
+            background: linear-gradient(135deg, var(--hidrobio-green) 0%, var(--hidrobio-green-dark) 100%);
+            color: white;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            font-weight: 700;
+            border: 3px solid white;
+            box-shadow: var(--shadow);
+        }
+
+        .hero h2 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 800;
+            font-size: 2.5rem;
+            color: white;
+            margin-bottom: 0.5rem;
+        }
+
+        .hero .role {
+            font-size: 1.1rem;
+            color: var(--aurelio-gold);
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .hero .intro {
+            font-size: 1rem;
+            color: rgba(255,255,255,0.9);
+            line-height: 1.7;
+            margin-bottom: 1.5rem;
+        }
+
+        .hero-quote {
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            border-left: 4px solid var(--aurelio-gold);
+            padding: 1rem 1.25rem;
+            border-radius: 0 12px 12px 0;
+            text-align: left;
+            font-style: italic;
+            color: rgba(255,255,255,0.95);
+            font-size: 0.95rem;
+        }
+
+        /* Main Content */
+        .main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem 1rem;
+        }
+
+        .section {
+            background: white;
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow);
+        }
+
+        .section-title {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+            font-size: 1.25rem;
+            color: var(--aurelio-dark);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding-bottom: 0.75rem;
+            border-bottom: 2px solid var(--aurelio-gold);
+        }
+
+        .section-title .icon {
+            font-size: 1.5rem;
+        }
+
+        /* Capabilities */
+        .capabilities-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+
+        .capability-card {
+            background: var(--light-grey);
+            border-radius: 12px;
+            padding: 1.25rem;
+            border-left: 4px solid var(--aurelio-gold);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .capability-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+        }
+
+        .capability-card h4 {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 1rem;
+            color: var(--aurelio-dark);
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .capability-card p {
+            font-size: 0.9rem;
+            color: var(--text-light);
+            margin: 0;
+        }
+
+        /* Collaboration Section */
+        .collaboration {
+            background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 100%);
+            border-radius: 16px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            gap: 1rem;
+        }
+
+        @media (min-width: 600px) {
+            .collaboration {
+                flex-direction: row;
+                text-align: left;
+            }
+        }
+
+        .collab-avatars {
+            display: flex;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .collab-avatar {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            border: 3px solid white;
+            box-shadow: var(--shadow);
+        }
+
+        .collab-avatar:last-child {
+            margin-left: -25px;
+        }
+
+        .collab-content h4 {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 1.1rem;
+            color: var(--hidrobio-green-dark);
+            margin-bottom: 0.5rem;
+        }
+
+        .collab-content p {
+            font-size: 0.95rem;
+            color: var(--text-dark);
+            margin: 0;
+        }
+
+        /* Schedule */
+        .schedule {
+            background: linear-gradient(135deg, var(--aurelio-dark) 0%, var(--aurelio-dark-light) 100%);
+            border-radius: 16px;
+            padding: 1.5rem;
+            color: white;
+        }
+
+        .schedule .section-title {
+            color: var(--aurelio-gold);
+            border-bottom-color: rgba(255,255,255,0.2);
+        }
+
+        .schedule-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .schedule-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            transition: background 0.2s ease;
+        }
+
+        .schedule-item:hover {
+            background: rgba(255,255,255,0.15);
+        }
+
+        .schedule-icon {
+            width: 50px;
+            height: 50px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            flex-shrink: 0;
+        }
+
+        .schedule-text strong {
+            display: block;
+            font-size: 0.95rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .schedule-text span {
+            font-size: 0.85rem;
+            opacity: 0.8;
+        }
+
+        /* Pricing Table */
+        .pricing-wrapper {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .pricing-table {
+            width: 100%;
+            min-width: 500px;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        .pricing-table th {
+            background: var(--aurelio-dark);
+            color: white;
+            padding: 0.75rem;
+            text-align: left;
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 600;
+            font-size: 0.8rem;
+            white-space: nowrap;
+        }
+
+        .pricing-table th:first-child {
+            border-radius: 8px 0 0 0;
+        }
+
+        .pricing-table th:last-child {
+            border-radius: 0 8px 0 0;
+        }
+
+        .pricing-table td {
+            padding: 0.75rem;
+            border-bottom: 1px solid #eee;
+        }
+
+        .pricing-table tr:nth-child(even) {
+            background: var(--light-grey);
+        }
+
+        .pricing-table tr:last-child td:first-child {
+            border-radius: 0 0 0 8px;
+        }
+
+        .pricing-table tr:last-child td:last-child {
+            border-radius: 0 0 8px 0;
+        }
+
+        .segment-badge {
+            display: inline-block;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-right: 0.5rem;
+        }
+
+        .segment-s1 { background: #E3F2FD; color: #1565C0; }
+        .segment-s2 { background: #E8F5E9; color: #2E7D32; }
+        .segment-s3 { background: #FFF3E0; color: #E65100; }
+        .segment-s4 { background: #F3E5F5; color: #7B1FA2; }
+        .segment-s5 { background: #FFEBEE; color: #C62828; }
+
+        /* Footer */
+        .footer {
+            background: var(--aurelio-dark);
+            color: white;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .footer-content {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .footer p {
+            font-size: 0.85rem;
+            opacity: 0.8;
+            margin-bottom: 0.5rem;
+        }
+
+        .footer .email {
+            color: var(--aurelio-gold);
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 600;
+        }
+
+        /* Responsive */
+        @media (min-width: 768px) {
+            .header {
+                padding: 1rem 2rem;
+            }
+
+            .header-badge {
+                display: block;
+            }
+
+            .hero {
+                padding: 4rem 2rem;
+            }
+
+            .avatar {
+                width: 160px;
+                height: 160px;
+            }
+
+            .hero h2 {
+                font-size: 3rem;
+            }
+
+            .main {
+                padding: 2rem;
+            }
+
+            .section {
+                padding: 2rem;
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .hero-content {
+                max-width: 700px;
+            }
+
+            .capabilities-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        /* Animation */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .section {
+            animation: fadeInUp 0.5s ease forwards;
+        }
+
+        .section:nth-child(2) { animation-delay: 0.1s; }
+        .section:nth-child(3) { animation-delay: 0.2s; }
+        .section:nth-child(4) { animation-delay: 0.3s; }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="header-brand">
+                <img src="assets/hidrobio-logo-horizontal.svg" alt="HidroBio" class="header-logo" style="height: 40px; width: auto;">
+                <div class="header-text">
+                    <h1>Inteligencia de Precios</h1>
+                    <div class="subtitle">Powered by AI</div>
+                </div>
+            </div>
+            <div class="header-badge">v1.0</div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="hero">
+        <div class="hero-content">
+            <div class="avatar-container">
+                <img src="assets/aurelio-avatar.png" alt="Aurelio" class="avatar">
+                <div class="avatar-badge">AI</div>
+            </div>
+
+            <h2>Soy Aurelio</h2>
+            <p class="role">Especialista en Inteligencia de Precios</p>
+            <p class="intro">
+                Nombrado en honor a <strong>Marco Aurelio</strong>, el emperador filosofo romano conocido por su
+                sabiduria y pensamiento estrategico. Mi mision es monitorear el mercado paraguayo
+                para ayudarles a vender al mejor precio posible.
+            </p>
+            <div class="hero-quote">
+                "No vendemos productos, vendemos valor. Mi trabajo es asegurar
+                que cada venta refleje el verdadero valor de nuestra calidad hidroponica."
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Capabilities -->
+        <section class="section">
+            <h3 class="section-title">
+                <span class="icon">🎯</span>
+                Mis Capacidades
+            </h3>
+            <div class="capabilities-grid">
+                <div class="capability-card">
+                    <h4>📊 Monitoreo de Precios</h4>
+                    <p>Escaneo diario de 4 supermercados (Stock, Superseis, Casa Rica, Salemma) para conocer los precios actuales del mercado.</p>
+                </div>
+                <div class="capability-card">
+                    <h4>🧮 Calculo de Medianas</h4>
+                    <p>Calculo la mediana de precios por producto para tener una referencia solida y eliminar valores atipicos.</p>
+                </div>
+                <div class="capability-card">
+                    <h4>🤖 Analisis con IA</h4>
+                    <p>Uso inteligencia artificial (Claude) para generar recomendaciones estrategicas de precios por segmento.</p>
+                </div>
+                <div class="capability-card">
+                    <h4>📈 Comparacion de Ventas</h4>
+                    <p>Comparo nuestros precios reales de Zoho Books contra las recomendaciones para identificar oportunidades.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Collaboration with Luciana -->
+        <section class="section" style="padding: 0; overflow: hidden;">
+            <div class="collaboration">
+                <div class="collab-avatars">
+                    <svg class="collab-avatar" viewBox="0 0 70 70" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="35" cy="35" r="32" fill="#2C3E50"/>
+                        <circle cx="35" cy="28" r="14" fill="#E8D5B7"/>
+                        <path d="M17 65 Q22 45 35 42 Q48 45 53 65" fill="#FAFAFA"/>
+                        <ellipse cx="35" cy="16" rx="16" ry="9" fill="#4A4A4A"/>
+                        <g fill="url(#goldGrad)" opacity="0.8">
+                            <ellipse cx="12" cy="28" rx="4" ry="2" transform="rotate(-20 12 28)"/>
+                            <ellipse cx="58" cy="28" rx="4" ry="2" transform="rotate(20 58 28)"/>
+                        </g>
+                    </svg>
+                    <svg class="collab-avatar" viewBox="0 0 70 70" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                            <linearGradient id="lucianaBg" x1="0%" y1="0%" x2="100%" y2="100%">
+                                <stop offset="0%" style="stop-color:#E91E63"/>
+                                <stop offset="100%" style="stop-color:#AD1457"/>
+                            </linearGradient>
+                        </defs>
+                        <circle cx="35" cy="35" r="32" fill="url(#lucianaBg)"/>
+                        <circle cx="35" cy="28" r="13" fill="#E8D5B7"/>
+                        <path d="M18 65 Q23 46 35 43 Q47 46 52 65" fill="#FAFAFA"/>
+                        <ellipse cx="35" cy="17" rx="15" ry="10" fill="#3E2723"/>
+                        <path d="M22 20 Q35 10 48 20" stroke="#3E2723" stroke-width="8" fill="none"/>
+                        <circle cx="30" cy="27" r="2" fill="#3E2723"/>
+                        <circle cx="40" cy="27" r="2" fill="#3E2723"/>
+                        <path d="M30 34 Q35 37 40 34" stroke="#C48B6D" stroke-width="2" fill="none"/>
+                        <text x="52" y="58" fill="white" font-size="16">💬</text>
+                    </svg>
+                </div>
+                <div class="collab-content">
+                    <h4>🤝 Trabajo en Equipo con Luciana</h4>
+                    <p>Mis recomendaciones de precios alimentan automaticamente a <strong>Luciana</strong>, nuestra agente de WhatsApp,
+                    para que pueda ofrecer precios competitivos y maximizar margenes en cada venta.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- Schedule -->
+        <section class="section schedule">
+            <h3 class="section-title">
+                <span class="icon">📅</span>
+                Mi Horario de Trabajo
+            </h3>
+            <div class="schedule-grid">
+                <div class="schedule-item">
+                    <div class="schedule-icon">🌅</div>
+                    <div class="schedule-text">
+                        <strong>Escaneo Diario</strong>
+                        <span>05:00 AM (antes de que abran)</span>
+                    </div>
+                </div>
+                <div class="schedule-item">
+                    <div class="schedule-icon">📧</div>
+                    <div class="schedule-text">
+                        <strong>Reporte Diario</strong>
+                        <span>Resumen de precios del mercado</span>
+                    </div>
+                </div>
+                <div class="schedule-item">
+                    <div class="schedule-icon">🧠</div>
+                    <div class="schedule-text">
+                        <strong>Analisis Semanal</strong>
+                        <span>Jueves 15:00 con IA</span>
+                    </div>
+                </div>
+                <div class="schedule-item">
+                    <div class="schedule-icon">📋</div>
+                    <div class="schedule-text">
+                        <strong>Reporte Completo</strong>
+                        <span>Recomendaciones para Calculadora</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Pricing Model -->
+        <section class="section">
+            <h3 class="section-title">
+                <span class="icon">💰</span>
+                Modelo de Precios por Segmento
+            </h3>
+            <div class="pricing-wrapper">
+                <table class="pricing-table">
+                    <thead>
+                        <tr>
+                            <th>Segmento</th>
+                            <th>% de Mediana</th>
+                            <th>Margen Min.</th>
+                            <th>Descripcion</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="segment-badge segment-s1">S1</span>Consumidor Final</td>
+                            <td>85-95%</td>
+                            <td>25%</td>
+                            <td>Precio premium, maxima calidad</td>
+                        </tr>
+                        <tr>
+                            <td><span class="segment-badge segment-s2">S2</span>HORECA</td>
+                            <td>70-80%</td>
+                            <td>20%</td>
+                            <td>Restaurantes, hoteles, catering</td>
+                        </tr>
+                        <tr>
+                            <td><span class="segment-badge segment-s3">S3</span>Supermercados</td>
+                            <td>60-75%</td>
+                            <td>15%</td>
+                            <td>Retail, tiendas especializadas</td>
+                        </tr>
+                        <tr>
+                            <td><span class="segment-badge segment-s4">S4</span>Institucional</td>
+                            <td>55-65%</td>
+                            <td>10%</td>
+                            <td>Corporativos, instituciones</td>
+                        </tr>
+                        <tr>
+                            <td><span class="segment-badge segment-s5">S5</span>Mayorista</td>
+                            <td>45-55%</td>
+                            <td>EVITAR</td>
+                            <td>Solo volumen extremo</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <p>Aurelio v1.0 | Powered by Claude AI</p>
+            <p class="email">aurelio@hidrobio.com.py</p>
+            <p>HidroBio S.A. © 2026</p>
+        </div>
+    </footer>
+</body>
+</html>

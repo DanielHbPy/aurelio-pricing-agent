@@ -1,0 +1,18 @@
+🤖 *Hola Equipo! Soy Aurelio*
+Tu nuevo especialista en inteligencia de precios
+
+📊 *Qué hago:*
+• Monitoreo diario de precios en 4 supermercados
+• Calculo medianas de mercado para cada producto
+• Genero recomendaciones de precios por segmento
+• Comparo nuestras ventas vs. el mercado
+
+⏰ *Mi horario:*
+• Escaneo: 05:00 AM (diario)
+• Análisis completo: Jueves 15:00
+
+🤝 Trabajo junto a Luciana para que vendan al mejor precio posible.
+
+📎 Adjunto mi presentación completa y el reporte de esta semana.
+
+_Powered by Claude AI | aurelio@hidrobio.com.py_

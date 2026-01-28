@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aurelio - Reporte Semanal de Precios</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&family=Open+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+    <style>
+        @page {
+            size: A4 portrait;
+            margin: 0;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --aurelio-gold: #C9A962;
+            --aurelio-dark: #2C3E50;
+            --aurelio-blue: #0078D4;
+            --hidrobio-green: #4CAF50;
+            --success: #27AE60;
+            --warning: #F39C12;
+            --danger: #E74C3C;
+            --white: #FFFFFF;
+            --light-grey: #F8F9FA;
+            --text-dark: #1a1a1a;
+            --text-light: #666666;
+        }
+
+        body {
+            font-family: 'Open Sans', sans-serif;
+            color: var(--text-dark);
+            background: white;
+            line-height: 1.4;
+            font-size: 11px;
+        }
+
+        .page {
+            width: 210mm;
+            min-height: 297mm;
+            padding: 0;
+            page-break-after: always;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, var(--aurelio-dark) 0%, #1a252f 100%);
+            padding: 20px 25px;
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .header-avatar {
+            width: 50px;
+            height: 50px;
+        }
+
+        .header-title h1 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+            font-size: 18px;
+            margin-bottom: 3px;
+        }
+
+        .header-title .subtitle {
+            font-size: 11px;
+            opacity: 0.8;
+        }
+
+        .header-right {
+            text-align: right;
+        }
+
+        .header-date {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 600;
+            font-size: 14px;
+            color: var(--aurelio-gold);
+        }
+
+        .header-period {
+            font-size: 10px;
+            opacity: 0.8;
+        }
+
+        /* Executive Summary */
+        .executive-summary {
+            background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 100%);
+            padding: 15px 25px;
+            border-bottom: 3px solid var(--hidrobio-green);
+        }
+
+        .summary-title {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+            font-size: 12px;
+            color: var(--hidrobio-green);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .summary-text {
+            font-size: 12px;
+            line-height: 1.6;
+            color: var(--text-dark);
+        }
+
+        /* Main Content */
+        .content {
+            padding: 15px 25px;
+        }
+
+        .section {
+            margin-bottom: 18px;
+        }
+
+        .section-title {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+            font-size: 13px;
+            color: var(--aurelio-dark);
+            margin-bottom: 10px;
+            padding-bottom: 5px;
+            border-bottom: 2px solid var(--aurelio-gold);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Price Recommendations Table */
+        .price-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+            margin-bottom: 15px;
+        }
+
+        .price-table th {
+            background: var(--aurelio-dark);
+            color: white;
+            padding: 8px 6px;
+            text-align: center;
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 600;
+            font-size: 9px;
+        }
+
+        .price-table th:first-child {
+            text-align: left;
+            border-radius: 6px 0 0 0;
+        }
+
+        .price-table th:last-child {
+            border-radius: 0 6px 0 0;
+        }
+
+        .price-table td {
+            padding: 7px 6px;
+            border-bottom: 1px solid #eee;
+            text-align: center;
+        }
+
+        .price-table td:first-child {
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .price-table tr:nth-child(even) {
+            background: var(--light-grey);
+        }
+
+        .price-table tr:last-child td:first-child {
+            border-radius: 0 0 0 6px;
+        }
+
+        .price-table tr:last-child td:last-child {
+            border-radius: 0 0 6px 0;
+        }
+
+        .price-highlight {
+            background: linear-gradient(135deg, var(--aurelio-gold) 0%, #E8D5A3 100%);
+            color: var(--aurelio-dark);
+            font-weight: 700;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        /* Implementation Analysis */
+        .implementation-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+        }
+
+        .implementation-table th {
+            background: linear-gradient(135deg, var(--hidrobio-green) 0%, #388E3C 100%);
+            color: white;
+            padding: 8px 6px;
+            text-align: center;
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 600;
+            font-size: 9px;
+        }
+
+        .implementation-table th:first-child {
+            text-align: left;
+            border-radius: 6px 0 0 0;
+        }
+
+        .implementation-table th:last-child {
+            border-radius: 0 6px 0 0;
+        }
+
+        .implementation-table td {
+            padding: 7px 6px;
+            border-bottom: 1px solid #eee;
+            text-align: center;
+        }
+
+        .implementation-table td:first-child {
+            text-align: left;
+            font-weight: 600;
+        }
+
+        .implementation-table tr:nth-child(even) {
+            background: #F1F8F4;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 9px;
+            font-weight: 600;
+        }
+
+        .status-excelente { background: #E8F5E9; color: #1B5E20; }
+        .status-bueno { background: #E3F2FD; color: #1565C0; }
+        .status-aceptable { background: #FFF8E1; color: #F57F17; }
+        .status-bajo { background: #FFF3E0; color: #E65100; }
+        .status-critico { background: #FFEBEE; color: #C62828; }
+
+        /* Highlights Box */
+        .highlights {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 15px;
+        }
+
+        .highlight-box {
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .highlight-success {
+            background: linear-gradient(135deg, #E8F5E9 0%, #C8E6C9 100%);
+            border-left: 4px solid var(--success);
+        }
+
+        .highlight-warning {
+            background: linear-gradient(135deg, #FFF8E1 0%, #FFECB3 100%);
+            border-left: 4px solid var(--warning);
+        }
+
+        .highlight-title {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 600;
+            font-size: 11px;
+            margin-bottom: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .highlight-success .highlight-title { color: var(--success); }
+        .highlight-warning .highlight-title { color: var(--warning); }
+
+        .highlight-list {
+            list-style: none;
+            font-size: 10px;
+        }
+
+        .highlight-list li {
+            padding: 3px 0;
+            padding-left: 15px;
+            position: relative;
+        }
+
+        .highlight-list li::before {
+            content: '>';
+            position: absolute;
+            left: 0;
+            color: inherit;
+            opacity: 0.6;
+        }
+
+        /* Actions Box */
+        .actions-box {
+            background: linear-gradient(135deg, var(--aurelio-dark) 0%, #34495e 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .actions-title {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 700;
+            font-size: 12px;
+            color: var(--aurelio-gold);
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .actions-list {
+            list-style: none;
+        }
+
+        .actions-list li {
+            padding: 6px 0;
+            padding-left: 20px;
+            position: relative;
+            font-size: 11px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .actions-list li:last-child {
+            border-bottom: none;
+        }
+
+        .actions-list li::before {
+            content: attr(data-num);
+            position: absolute;
+            left: 0;
+            background: var(--aurelio-gold);
+            color: var(--aurelio-dark);
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            font-size: 9px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .action-urgent {
+            color: #FF6B6B;
+            font-weight: 600;
+        }
+
+        /* Collaboration Section */
+        .collaboration-section {
+            background: linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%);
+            padding: 12px 15px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .collab-icon {
+            font-size: 30px;
+        }
+
+        .collab-content h4 {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 11px;
+            color: var(--aurelio-blue);
+            margin-bottom: 4px;
+        }
+
+        .collab-content p {
+            font-size: 10px;
+            color: var(--text-dark);
+            margin: 0;
+        }
+
+        /* Alerts */
+        .alerts-section {
+            background: #FFEBEE;
+            border: 1px solid #FFCDD2;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 15px;
+        }
+
+        .alerts-title {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 600;
+            font-size: 11px;
+            color: var(--danger);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .alerts-list {
+            list-style: none;
+            font-size: 10px;
+        }
+
+        .alerts-list li {
+            padding: 4px 0;
+            color: #C62828;
+        }
+
+        /* Footer */
+        .footer {
+            background: var(--aurelio-dark);
+            color: white;
+            padding: 12px 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+        }
+
+        .footer-left {
+            font-size: 9px;
+            opacity: 0.8;
+        }
+
+        .footer-center {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            color: var(--aurelio-gold);
+        }
+
+        .footer-right img {
+            height: 20px;
+            opacity: 0.8;
+        }
+
+        /* Page 2 specific */
+        .product-cards {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .product-card {
+            background: var(--light-grey);
+            border-radius: 8px;
+            padding: 12px;
+            border-left: 4px solid var(--aurelio-gold);
+        }
+
+        .product-card h4 {
+            font-family: 'Montserrat', sans-serif;
+            font-size: 11px;
+            color: var(--aurelio-dark);
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .product-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            margin-bottom: 8px;
+        }
+
+        .product-stat {
+            font-size: 9px;
+        }
+
+        .product-stat label {
+            color: var(--text-light);
+            display: block;
+        }
+
+        .product-stat value {
+            font-weight: 600;
+            color: var(--text-dark);
+        }
+
+        .product-insight {
+            font-size: 9px;
+            color: var(--text-light);
+            font-style: italic;
+            padding-top: 6px;
+            border-top: 1px dashed #ddd;
+        }
+
+        .trend-up { color: var(--success); }
+        .trend-down { color: var(--danger); }
+        .trend-stable { color: var(--text-light); }
+    </style>
+</head>
+<body>
+    <!-- PAGE 1: Main Report -->
+    <div class="page">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-left">
+                <img class="header-avatar" src="assets/aurelio-avatar.png" alt="Aurelio" style="width:50px;height:50px;border-radius:50%;object-fit:cover;border:2px solid #C9A962;">
+                <div class="header-title">
+                    <h1>Reporte Semanal de Precios</h1>
+                    <div class="subtitle">Inteligencia de Mercado para el Equipo Comercial</div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="header-date">27 de Enero, 2026</div>
+                <div class="header-period">Semana 4 | Datos: 20-27 Ene</div>
+            </div>
+        </div>
+
+        <!-- Executive Summary -->
+        <div class="executive-summary">
+            <div class="summary-title">
+                <span>📝</span> RESUMEN EJECUTIVO
+            </div>
+            <div class="summary-text">
+                Mercado estable para tomates lisa y locotes. <strong>Cherry muestra precio extremo</strong> (unico proveedor premium).
+                Implementacion de precios critica: vendiendo mayormente en banda mayorista/institucional cuando deberiamos estar en HORECA/retail.
+                <strong>Oportunidad inmediata:</strong> Tomate Cherry a 4x por debajo del mercado.
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="content">
+            <!-- Price Recommendations -->
+            <div class="section">
+                <h3 class="section-title"><span>💰</span> Precios Recomendados para la Calculadora</h3>
+                <table class="price-table">
+                    <thead>
+                        <tr>
+                            <th>Producto</th>
+                            <th>Mediana Mercado</th>
+                            <th>Cons. Final (90%)</th>
+                            <th>HORECA (75%)</th>
+                            <th>Supermkts (68%)</th>
+                            <th>Instituc. (60%)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Tomate Lisa (kg)</td>
+                            <td><span class="price-highlight">17,950</span></td>
+                            <td>16,155</td>
+                            <td>13,463</td>
+                            <td>12,206</td>
+                            <td>10,770</td>
+                        </tr>
+                        <tr>
+                            <td>Tomate Perita (kg)</td>
+                            <td><span class="price-highlight">16,950</span></td>
+                            <td>15,255</td>
+                            <td>12,713</td>
+                            <td>11,526</td>
+                            <td>10,170</td>
+                        </tr>
+                        <tr>
+                            <td>Tomate Cherry (kg)</td>
+                            <td><span class="price-highlight">78,167</span></td>
+                            <td>70,350</td>
+                            <td>58,625</td>
+                            <td>53,154</td>
+                            <td>46,900</td>
+                        </tr>
+                        <tr>
+                            <td>Locote Rojo (kg)</td>
+                            <td><span class="price-highlight">28,000</span></td>
+                            <td>25,200</td>
+                            <td>21,000</td>
+                            <td>19,040</td>
+                            <td>16,800</td>
+                        </tr>
+                        <tr>
+                            <td>Locote Amarillo (kg)</td>
+                            <td><span class="price-highlight">39,950</span></td>
+                            <td>35,955</td>
+                            <td>29,963</td>
+                            <td>27,166</td>
+                            <td>23,970</td>
+                        </tr>
+                        <tr>
+                            <td>Lechuga Pirati (uni)</td>
+                            <td><span class="price-highlight">4,050</span></td>
+                            <td>3,645</td>
+                            <td>3,038</td>
+                            <td>3,000*</td>
+                            <td>3,000*</td>
+                        </tr>
+                        <tr>
+                            <td>Verdeos (atado)</td>
+                            <td><span class="price-highlight">1,675</span></td>
+                            <td>1,800*</td>
+                            <td>1,800*</td>
+                            <td>1,800*</td>
+                            <td>1,800*</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p style="font-size: 9px; color: var(--text-light); text-align: right;">* Precio limitado por piso absoluto (costo + margen minimo)</p>
+            </div>
+
+            <!-- Implementation Analysis -->
+            <div class="section">
+                <h3 class="section-title"><span>📈</span> Analisis de Implementacion de Estrategia</h3>
+                <table class="implementation-table">
+                    <thead>
+                        <tr>
+                            <th>Producto</th>
+                            <th>Precio Vendido</th>
+                            <th>% Mediana</th>
+                            <th>Evaluacion</th>
+                            <th>Cantidad</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Tomate Lisa (kg)</td>
+                            <td>Gs. 12,828</td>
+                            <td>71.5%</td>
+                            <td><span class="status-badge status-aceptable">Aceptable</span></td>
+                            <td>1,353 kg</td>
+                        </tr>
+                        <tr>
+                            <td>Tomate Perita (kg)</td>
+                            <td>Gs. 11,772</td>
+                            <td>69.5%</td>
+                            <td><span class="status-badge status-aceptable">Aceptable</span></td>
+                            <td>1,657 kg</td>
+                        </tr>
+                        <tr>
+                            <td>Tomate Cherry (kg)</td>
+                            <td>Gs. 17,143</td>
+                            <td>21.9%</td>
+                            <td><span class="status-badge status-critico">CRITICO</span></td>
+                            <td>45 kg</td>
+                        </tr>
+                        <tr>
+                            <td>Locote Rojo (kg)</td>
+                            <td>Gs. 14,896</td>
+                            <td>53.2%</td>
+                            <td><span class="status-badge status-bajo">Bajo</span></td>
+                            <td>640.7 kg</td>
+                        </tr>
+                        <tr>
+                            <td>Locote Amarillo (kg)</td>
+                            <td>Gs. 27,040</td>
+                            <td>67.7%</td>
+                            <td><span class="status-badge status-bueno">Bueno</span></td>
+                            <td>29.6 kg</td>
+                        </tr>
+                        <tr>
+                            <td>Lechuga Pirati (uni)</td>
+                            <td>Gs. 3,207</td>
+                            <td>79.2%</td>
+                            <td><span class="status-badge status-bueno">Bueno</span></td>
+                            <td>2,053 uni</td>
+                        </tr>
+                        <tr>
+                            <td>Verdeos (atado)</td>
+                            <td>Gs. 2,273</td>
+                            <td>135.7%</td>
+                            <td><span class="status-badge status-excelente">Excelente</span></td>
+                            <td>529 atados</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Highlights -->
+            <div class="highlights">
+                <div class="highlight-box highlight-success">
+                    <div class="highlight-title"><span>✅</span> Destacados</div>
+                    <ul class="highlight-list">
+                        <li>Verdeos vendiendo premium sobre retail</li>
+                        <li>Lechuga Pirati con buen volumen en precio correcto</li>
+                        <li>Locote Amarillo bien posicionado</li>
+                    </ul>
+                </div>
+                <div class="highlight-box highlight-warning">
+                    <div class="highlight-title"><span>📌</span> Oportunidades de Mejora</div>
+                    <ul class="highlight-list">
+                        <li>Tomate Cherry - precio 4x por debajo del mercado</li>
+                        <li>Locote Rojo - dispersion extrema de precios</li>
+                        <li>Tomate Lisa - puede subir hacia HORECA</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="actions-box">
+                <div class="actions-title"><span>🎯</span> ACCIONES SUGERIDAS</div>
+                <ul class="actions-list">
+                    <li data-num="1" class="action-urgent"><strong>INMEDIATO:</strong> Subir Cherry de 17k a minimo 45-50k para capturar valor premium</li>
+                    <li data-num="2">Establecer precios minimos estrictos para locotes (no bajar de 18k rojo, 25k amarillo)</li>
+                    <li data-num="3">Capacitar vendedores en bandas de negociacion para reducir dispersion de precios</li>
+                </ul>
+            </div>
+
+            <!-- Luciana Collaboration -->
+            <div class="collaboration-section">
+                <div class="collab-icon">🤝</div>
+                <div class="collab-content">
+                    <h4>Integracion con Luciana</h4>
+                    <p>Estos precios recomendados alimentan automaticamente a Luciana, nuestra agente de WhatsApp,
+                    para cotizar correctamente cada pedido segun el segmento del cliente.</p>
+                </div>
+            </div>
+
+            <!-- Alerts -->
+            <div class="alerts-section">
+                <div class="alerts-title"><span>⚠️</span> ALERTAS GENERALES</div>
+                <ul class="alerts-list">
+                    <li><strong>Cherry:</strong> Oportunidad critica perdida - mercado paga 78k, vendemos 17k</li>
+                    <li><strong>Locotes:</strong> Dispersion extrema indica descontrol comercial</li>
+                    <li><strong>Estrategia:</strong> Muchas ventas en banda mayorista cuando deberiamos estar en HORECA/retail</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="footer-left">
+                Aurelio v1.0 | Powered by Claude AI
+            </div>
+            <div class="footer-center">
+                aurelio@hidrobio.com.py
+            </div>
+            <div class="footer-right">
+                <span style="font-size: 9px; opacity: 0.8;">HidroBio S.A. &copy; 2026</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- PAGE 2: Product Details -->
+    <div class="page">
+        <!-- Header -->
+        <div class="header">
+            <div class="header-left">
+                <img class="header-avatar" src="assets/aurelio-avatar.png" alt="Aurelio" style="width:50px;height:50px;border-radius:50%;object-fit:cover;border:2px solid #C9A962;">
+                <div class="header-title">
+                    <h1>Detalle por Producto</h1>
+                    <div class="subtitle">Analisis Individual con Recomendaciones</div>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="header-date">27 de Enero, 2026</div>
+                <div class="header-period">Pagina 2 de 2</div>
+            </div>
+        </div>
+
+        <!-- Content -->
+        <div class="content" style="padding-top: 20px;">
+            <div class="product-cards">
+                <!-- Tomate Lisa -->
+                <div class="product-card">
+                    <h4><span>🍅</span> Tomate Lisa (kg)</h4>
+                    <div class="product-stats">
+                        <div class="product-stat">
+                            <label>Mediana:</label>
+                            <value>Gs. 17,950</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Tendencia:</label>
+                            <value class="trend-stable">Estable (0.0%)</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Piso Absoluto:</label>
+                            <value>Gs. 8,500</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Margen Disponible:</label>
+                            <value>133.3%</value>
+                        </div>
+                    </div>
+                    <div class="product-insight">
+                        Precio estable, margenes excelentes disponibles por calidad hidroponica.
+                        Puede subir hacia banda HORECA.
+                    </div>
+                </div>
+
+                <!-- Tomate Perita -->
+                <div class="product-card">
+                    <h4><span>🍅</span> Tomate Perita (kg)</h4>
+                    <div class="product-stats">
+                        <div class="product-stat">
+                            <label>Mediana:</label>
+                            <value>Gs. 16,950</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Tendencia:</label>
+                            <value class="trend-down">Bajando (-5.6%)</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Piso Absoluto:</label>
+                            <value>Gs. 8,500</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Margen Disponible:</label>
+                            <value>120.3%</value>
+                        </div>
+                    </div>
+                    <div class="product-insight">
+                        Mercado en baja leve pero margenes solidos. Alta dispersion de
+                        precios vendidos indica falta de consistencia.
+                    </div>
+                </div>
+
+                <!-- Tomate Cherry - CRITICAL -->
+                <div class="product-card" style="border-left-color: var(--danger); background: #FFF5F5;">
+                    <h4 style="color: var(--danger);"><span>🍅</span> Tomate Cherry (kg) - CRITICO</h4>
+                    <div class="product-stats">
+                        <div class="product-stat">
+                            <label>Mediana:</label>
+                            <value style="color: var(--danger); font-size: 12px;">Gs. 78,167</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Tendencia:</label>
+                            <value class="trend-up">Subiendo (+335%)</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Piso Absoluto:</label>
+                            <value>Gs. 12,000</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Margen Disponible:</label>
+                            <value style="color: var(--success);">603%!</value>
+                        </div>
+                    </div>
+                    <div class="product-insight" style="color: var(--danger);">
+                        <strong>OPORTUNIDAD PERDIDA:</strong> Vendiendo a 17k cuando mercado paga 78k.
+                        Reposicionar INMEDIATAMENTE como producto ultra-premium. Minimo 45k.
+                    </div>
+                </div>
+
+                <!-- Locote Rojo -->
+                <div class="product-card" style="border-left-color: var(--warning);">
+                    <h4><span>🫑</span> Locote Rojo (kg)</h4>
+                    <div class="product-stats">
+                        <div class="product-stat">
+                            <label>Mediana:</label>
+                            <value>Gs. 28,000</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Tendencia:</label>
+                            <value class="trend-stable">Estable (0.0%)</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Piso Absoluto:</label>
+                            <value>Gs. 15,000</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Margen Disponible:</label>
+                            <value>108%</value>
+                        </div>
+                    </div>
+                    <div class="product-insight" style="color: var(--warning);">
+                        <strong>ALERTA:</strong> Dispersion extrema (8k-32.5k) indica falta de
+                        consistencia en estrategia comercial. Establecer piso de 18k.
+                    </div>
+                </div>
+
+                <!-- Locote Amarillo -->
+                <div class="product-card">
+                    <h4><span>🫑</span> Locote Amarillo (kg)</h4>
+                    <div class="product-stats">
+                        <div class="product-stat">
+                            <label>Mediana:</label>
+                            <value>Gs. 39,950</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Tendencia:</label>
+                            <value class="trend-stable">Estable (0.0%)</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Piso Absoluto:</label>
+                            <value>Gs. 15,000</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Margen Disponible:</label>
+                            <value>196.8%</value>
+                        </div>
+                    </div>
+                    <div class="product-insight">
+                        Buen posicionamiento, vendiendo en banda supermercados.
+                        Oportunidad de subir gradualmente hacia HORECA.
+                    </div>
+                </div>
+
+                <!-- Lechuga Pirati -->
+                <div class="product-card">
+                    <h4><span>🥬</span> Lechuga Pirati (unidad)</h4>
+                    <div class="product-stats">
+                        <div class="product-stat">
+                            <label>Mediana:</label>
+                            <value>Gs. 4,050</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Tendencia:</label>
+                            <value class="trend-down">Bajando (-3.6%)</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Piso Absoluto:</label>
+                            <value>Gs. 3,000</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Margen Disponible:</label>
+                            <value>45.8%</value>
+                        </div>
+                    </div>
+                    <div class="product-insight">
+                        Margenes ajustados por mercado competitivo. Producto de volumen,
+                        mantener eficiencia operativa. Evaluar si mantener en portafolio.
+                    </div>
+                </div>
+
+                <!-- Verdeos -->
+                <div class="product-card" style="border-left-color: var(--success); background: #F5FFF5;">
+                    <h4 style="color: var(--success);"><span>🌿</span> Verdeos (atado) - EXCELENTE</h4>
+                    <div class="product-stats">
+                        <div class="product-stat">
+                            <label>Mediana:</label>
+                            <value>Gs. 1,675</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Tendencia:</label>
+                            <value class="trend-down">Bajando (-51.4%)</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Piso Absoluto:</label>
+                            <value>Gs. 1,800</value>
+                        </div>
+                        <div class="product-stat">
+                            <label>Precio Vendido:</label>
+                            <value style="color: var(--success);">Gs. 2,273 (135%!)</value>
+                        </div>
+                    </div>
+                    <div class="product-insight" style="color: var(--success);">
+                        <strong>MODELO A SEGUIR:</strong> Vendiendo premium sobre retail.
+                        Verificar que sea sostenible a largo plazo.
+                    </div>
+                </div>
+
+                <!-- Summary Card -->
+                <div class="product-card" style="border-left-color: var(--aurelio-blue); background: #F0F7FF;">
+                    <h4 style="color: var(--aurelio-blue);"><span>📊</span> Resumen de la Semana</h4>
+                    <div style="font-size: 10px; line-height: 1.6;">
+                        <p><strong>61 facturas</strong> analizadas del 20 al 27 de enero</p>
+                        <p><strong>4 supermercados</strong> monitoreados diariamente</p>
+                        <p><strong>7 productos</strong> en seguimiento continuo</p>
+                        <p style="margin-top: 8px; padding-top: 8px; border-top: 1px dashed #ccc;">
+                            <strong>Proximos pasos:</strong> Actualizar Calculadora de Precios
+                            con nuevas medianas y comunicar bandas al equipo comercial.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="footer-left">
+                Aurelio v1.0 | Powered by Claude AI
+            </div>
+            <div class="footer-center">
+                aurelio@hidrobio.com.py
+            </div>
+            <div class="footer-right">
+                <span style="font-size: 9px; opacity: 0.8;">HidroBio S.A. &copy; 2026</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
