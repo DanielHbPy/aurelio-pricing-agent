@@ -56,7 +56,10 @@ const CONFIG = {
   products: [
     {
       name: 'Tomate Lisa',
-      searchTerms: ['tomate lisa', 'tomate redondo', 'tomate holandes', 'tomate holandés'],
+      // ONLY match "lisa" or "holandes" - these are the same variety (round tomato)
+      searchTerms: ['tomate lisa', 'tomate holandes', 'tomate holandés'],
+      // Exclude Santa Cruz (that's Perita) and Cherry
+      excludeTerms: ['santa cruz', 'cherry', 'perita', 'pera'],
       unit: 'kg',
       hidrobioCost: 6926,  // Gs. per kg (from calculator)
       hidrobioPisoAbsoluto: 8500,  // Floor price - never sell below
@@ -65,8 +68,10 @@ const CONFIG = {
     },
     {
       name: 'Tomate Perita',
-      // Tomate Perita = Tomate Santa Cruz in Paraguay market
+      // Tomate Perita = Tomate Santa Cruz in Paraguay market (oblong/plum tomato)
       searchTerms: ['tomate perita', 'tomate pera', 'tomate santa cruz'],
+      // Exclude Lisa and Cherry
+      excludeTerms: ['lisa', 'holandes', 'holandés', 'cherry'],
       unit: 'kg',
       hidrobioCost: 6926,
       hidrobioPisoAbsoluto: 8500,
@@ -75,7 +80,10 @@ const CONFIG = {
     },
     {
       name: 'Tomate Cherry',
-      searchTerms: ['tomate cherry', 'cherry rojo'],  // Cherry is specific - don't fallback to other tomatoes
+      // Cherry is specific - MUST have "tomate" to avoid candy/other products
+      searchTerms: ['tomate cherry'],
+      // Exclude other tomato types AND non-food items
+      excludeTerms: ['lisa', 'santa cruz', 'perita', 'holandes', 'caramelo', 'candy', 'halls', 'mentho', 'deo', 'axe', 'spray', 'bodyspra', 'desodorante'],
       unit: 'kg',
       hidrobioCost: 10000,  // Per kg
       hidrobioPisoAbsoluto: 12000,
@@ -85,6 +93,7 @@ const CONFIG = {
     {
       name: 'Locote Rojo',
       searchTerms: ['locote rojo', 'pimiento rojo', 'morron rojo'],
+      excludeTerms: ['amarillo', 'verde'],
       unit: 'kg',
       hidrobioCost: 12114,
       hidrobioPisoAbsoluto: 15000,
@@ -94,6 +103,7 @@ const CONFIG = {
     {
       name: 'Locote Amarillo',
       searchTerms: ['locote amarillo', 'pimiento amarillo', 'morron amarillo'],
+      excludeTerms: ['rojo', 'verde'],
       unit: 'kg',
       hidrobioCost: 12114,
       hidrobioPisoAbsoluto: 15000,
@@ -102,7 +112,10 @@ const CONFIG = {
     },
     {
       name: 'Lechuga Pirati',
-      searchTerms: ['lechuga pirati', 'lechuga crespa'],
+      // Match Pirati specifically, and other common lechuga types sold by unit
+      searchTerms: ['lechuga pirati', 'lechuga crespa', 'lechuga mantecosa', 'lechuga blanca', 'lechuga mimosa'],
+      // Exclude kg-priced items (repollada is sold by kg at supermarkets, not comparable)
+      excludeTerms: ['repollada', 'por kg', 'x kg'],
       unit: 'unidad',
       hidrobioCost: 2500,
       hidrobioPisoAbsoluto: 3000,
@@ -111,7 +124,10 @@ const CONFIG = {
     },
     {
       name: 'Verdeos',
-      searchTerms: ['cebollita', 'perejil', 'cilantro', 'verdeo'],
+      // ONLY fresh verdeos - cebollita de hoja and fresh perejil/cilantro por unidad
+      searchTerms: ['cebollita de hoja', 'perejil por', 'cilantro por', 'verdeo'],
+      // Exclude ALL processed/packaged products
+      excludeTerms: ['molido', 'molida', 'tostado', 'galleta', 'gramos', 'gr', 'hierbapar', 'arcoiris', 'kelwa', 'paquete', 'bolsa'],
       unit: 'atado',
       hidrobioCost: 1500,
       hidrobioPisoAbsoluto: 1800,
@@ -382,6 +398,18 @@ class PriceDatabase {
     stmt.run(date, alertType, product, supermarket, message, severity);
   }
 
+  getRecentAlerts(days = 7) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+    const sinceStr = since.toISOString().split('T')[0];
+
+    return this.db.prepare(`
+      SELECT * FROM alerts
+      WHERE date >= ?
+      ORDER BY created_at DESC
+    `).all(sinceStr);
+  }
+
   close() {
     this.db.close();
   }
@@ -402,12 +430,19 @@ const SCRAPERS = {
     const results = [];
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'es-PY,es;q=0.9,en;q=0.8'
         },
-        timeout: 30000
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       const html = await response.text();
       const $ = cheerio.load(html);
@@ -489,48 +524,76 @@ const SCRAPERS = {
     const url = config.searchUrl.replace('{query}', encodeURIComponent(query));
     const results = [];
 
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        },
-        timeout: 30000
-      });
+    // Retry logic for flaky connections
+    const maxRetries = 2;
+    let lastError = null;
 
-      const html = await response.text();
-      const $ = cheerio.load(html);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 45000); // 45s timeout
 
-      // Find products by data-product-id attribute on div.product-thumb
-      $('div.product-thumb[data-product-id]').each((_, el) => {
-        const $el = $(el);
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'es-PY,es;q=0.9,en;q=0.8',
+            'Connection': 'keep-alive'
+          },
+          signal: controller.signal
+        });
 
-        // Extract name from data-product-name attribute on anchor tag
-        let name = $el.find('a[data-product-name]').attr('data-product-name') || '';
-        if (!name) {
-          // Fallback: get text from the anchor
-          name = $el.find('a').first().text().trim();
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
         }
 
-        // Extract price from data-product-price attribute (format: "₲ 17.950")
-        const priceAttr = $el.attr('data-product-price') || '';
-        const price = extractPrice(priceAttr);
+        const html = await response.text();
+        const $ = cheerio.load(html);
 
-        if (name && price && isFreshProduce(name)) {
-          // Avoid duplicates
-          if (!results.some(r => r.name === name)) {
-            results.push({
-              supermarket: config.name,
-              name: name.trim(),
-              price,
-              unit: detectUnit(name)
-            });
+        // Find products by data-product-id attribute on div.product-thumb
+        $('div.product-thumb[data-product-id]').each((_, el) => {
+          const $el = $(el);
+
+          // Extract name from data-product-name attribute on anchor tag
+          let name = $el.find('a[data-product-name]').attr('data-product-name') || '';
+          if (!name) {
+            // Fallback: get text from the anchor
+            name = $el.find('a').first().text().trim();
           }
+
+          // Extract price from data-product-price attribute (format: "₲ 17.950")
+          const priceAttr = $el.attr('data-product-price') || '';
+          const price = extractPrice(priceAttr);
+
+          if (name && price && isFreshProduce(name)) {
+            // Avoid duplicates
+            if (!results.some(r => r.name === name)) {
+              results.push({
+                supermarket: config.name,
+                name: name.trim(),
+                price,
+                unit: detectUnit(name)
+              });
+            }
+          }
+        });
+
+        // Success - break out of retry loop
+        return results;
+
+      } catch (error) {
+        lastError = error;
+        if (attempt < maxRetries) {
+          // Wait before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
         }
-      });
-    } catch (error) {
-      console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
+      }
     }
 
+    // All retries failed
+    console.error(`[Aurelio] Error scraping ${config.name}:`, lastError?.message || 'Unknown error');
     return results;
   },
 
@@ -974,7 +1037,17 @@ function isFreshProduce(name) {
     'polvo', 'condimento', 'especias', 'sazonador',
     // Packaging that indicates processed (but NOT gram weight which can be fresh packaged)
     'frasco', 'botella', 'tetra', 'brick', 'sachet',
-    'ml ', 'cc '  // ml/cc measures usually indicate processed liquids
+    'ml ', 'cc ',  // ml/cc measures usually indicate processed liquids
+    // NON-FOOD ITEMS - candy, personal care, etc.
+    'caramelo', 'caramelos', 'candy', 'halls', 'mentho', 'mento',
+    'chicle', 'goma de mascar', 'gomita',
+    'deo', 'desodorante', 'axe', 'rexona', 'dove',
+    'spray', 'bodyspra', 'aerosol', 'perfume', 'colonia',
+    'shampoo', 'acondicionador', 'jabon', 'jabón',
+    'crema', 'locion', 'loción', 'gel de', 'gel para',
+    'detergente', 'limpiador', 'lavandina',
+    // Snacks that might have cherry/tomato flavors
+    'snack', 'chip', 'papa frita', 'nachos'
   ];
 
   const nameLower = name.toLowerCase();
@@ -1066,36 +1139,36 @@ function normalizePricePerKg(name, price) {
 }
 
 /**
- * Check if a product name matches a search term with color/type specificity
+ * Check if a product name matches a search term with exclusion support
  * For example: "locote rojo" should only match "locote rojo", not "locote amarillo"
+ * @param {string} productName - The scraped product name
+ * @param {string} searchTerm - The search term to match
+ * @param {string[]} excludeTerms - Terms that should NOT be present (optional)
+ * @returns {boolean}
  */
-function productMatches(productName, searchTerm) {
+function productMatches(productName, searchTerm, excludeTerms = []) {
   const nameLower = productName.toLowerCase();
   const termLower = searchTerm.toLowerCase();
 
-  // Split into words
+  // FIRST: Check exclusions - if ANY exclude term is present, reject immediately
+  if (excludeTerms && excludeTerms.length > 0) {
+    for (const exclude of excludeTerms) {
+      if (nameLower.includes(exclude.toLowerCase())) {
+        return false;
+      }
+    }
+  }
+
+  // Split search term into words
   const termWords = termLower.split(/\s+/);
 
-  // For single-word terms, just check if the name contains it
-  if (termWords.length === 1) {
-    return nameLower.includes(termLower);
+  // For multi-word terms, ALL words must be present
+  if (termWords.length > 1) {
+    return termWords.every(word => nameLower.includes(word));
   }
 
-  // For multi-word terms, check if ALL words are present
-  // This ensures "locote rojo" only matches products with both "locote" AND "rojo"
-  const allWordsPresent = termWords.every(word => nameLower.includes(word));
-
-  // Special handling for color-specific terms
-  const colors = ['rojo', 'amarillo', 'verde', 'blanco', 'morado', 'morada'];
-  const termHasColor = termWords.some(w => colors.includes(w));
-
-  if (termHasColor) {
-    // If term specifies a color, product must also have that color
-    return allWordsPresent;
-  }
-
-  // For non-color terms, check first word is present
-  return nameLower.includes(termWords[0]);
+  // For single-word terms, just check if present
+  return nameLower.includes(termLower);
 }
 
 // =============================================================================
@@ -1105,7 +1178,7 @@ function productMatches(productName, searchTerm) {
 async function syncToZohoAnalytics(db) {
   const credentials = loadZohoCredentials();
   if (!credentials.ZOHO_REFRESH_TOKEN) {
-    console.log('[Aurelio] Zoho credentials not found, skipping Analytics sync');
+    console.log('[Aurelio] ℹ️ Zoho credentials not found, skipping Analytics sync');
     return;
   }
 
@@ -1114,7 +1187,7 @@ async function syncToZohoAnalytics(db) {
     const prices = db.getTodayPrices();
 
     if (prices.length === 0) {
-      console.log('[Aurelio] No prices to sync');
+      console.log('[Aurelio] ℹ️ No prices to sync');
       return;
     }
 
@@ -1129,9 +1202,15 @@ async function syncToZohoAnalytics(db) {
     }));
 
     await importToAnalytics(accessToken, data, 'append', CONFIG.zoho.marketPricesTableId);
-    console.log(`[Aurelio] Synced ${data.length} prices to Zoho Analytics`);
+    console.log(`[Aurelio] ✅ Synced ${data.length} prices to Zoho Analytics`);
   } catch (error) {
-    console.error('[Aurelio] Failed to sync to Analytics:', error.message);
+    // Check for OAuth scope error
+    if (error.message.includes('INVALID_OAUTHSCOPE') || error.message.includes('8540')) {
+      console.log('[Aurelio] ⚠️ Zoho Analytics sync skipped - OAuth token missing ZohoAnalytics.data.CREATE scope');
+      console.log('[Aurelio]    To enable: regenerate token with scope ZohoAnalytics.fullaccess.CREATE');
+    } else {
+      console.error('[Aurelio] ❌ Analytics sync failed:', error.message);
+    }
   }
 }
 
@@ -1633,7 +1712,7 @@ TAREA:
     console.log('[Aurelio] Iniciando análisis con Claude...');
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-4-5-20251101',
       max_tokens: 8192,
       messages: [
         { role: 'user', content: userPrompt }
@@ -2504,7 +2583,8 @@ async function runScrapingOnly() {
           try {
             const results = await scraper(supermarket, term);
             for (const result of results) {
-              if (productMatches(result.name, term)) {
+              // Use exclude terms to prevent cross-contamination between products
+              if (productMatches(result.name, term, product.excludeTerms)) {
                 const isDupe = allPrices.some(p =>
                   p.supermarket === result.supermarket &&
                   p.name === result.name &&
@@ -2633,8 +2713,8 @@ async function runAurelio() {
             const results = await scraper(supermarket, term);
 
             for (const result of results) {
-              // Match against target product using improved matching
-              if (productMatches(result.name, term)) {
+              // Match against target product using improved matching with exclusions
+              if (productMatches(result.name, term, product.excludeTerms)) {
                 // Check for duplicates before adding
                 const isDupe = allPrices.some(p =>
                   p.supermarket === result.supermarket &&
@@ -2784,6 +2864,542 @@ function scheduleNextRun() {
 }
 
 // =============================================================================
+// TEAM REPORTS - For introducing Aurelio to the team
+// =============================================================================
+
+/**
+ * Generate a daily summary report for the team
+ * Shows: prices collected today, market snapshot, any alerts
+ */
+async function generateDailyTeamReport() {
+  loadEnvCredentials();
+
+  const db = new PriceDatabase();
+  const date = new Date().toLocaleDateString('es-PY', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  try {
+    const todayPrices = db.getTodayPrices();
+    const alerts = db.getRecentAlerts(7); // Last 7 days
+
+    // Group prices by product
+    const pricesByProduct = {};
+    for (const p of todayPrices) {
+      if (!pricesByProduct[p.product]) {
+        pricesByProduct[p.product] = [];
+      }
+      pricesByProduct[p.product].push(p);
+    }
+
+    // Calculate medians
+    const productSummaries = [];
+    for (const [product, prices] of Object.entries(pricesByProduct)) {
+      const values = prices.map(p => p.price_guaranies).filter(v => v > 0).sort((a, b) => a - b);
+      const median = values.length > 0 ? values[Math.floor(values.length / 2)] : 0;
+      const min = values.length > 0 ? Math.min(...values) : 0;
+      const max = values.length > 0 ? Math.max(...values) : 0;
+
+      productSummaries.push({
+        product,
+        median,
+        min,
+        max,
+        priceCount: prices.length,
+        sources: [...new Set(prices.map(p => p.supermarket))]
+      });
+    }
+
+    // Generate HTML email
+    const html = generateDailyReportHtml(date, productSummaries, todayPrices, alerts);
+
+    // Send email
+    const subject = `📊 [Aurelio] Resumen Diario - ${date}`;
+    await sendTeamEmail(subject, html);
+
+    console.log(`[Aurelio] ✅ Reporte diario enviado para ${date}`);
+    return { success: true, date, pricesCollected: todayPrices.length };
+
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Generate HTML for daily team report
+ */
+function generateDailyReportHtml(date, productSummaries, todayPrices, alerts) {
+  const pricesBySupermarket = {};
+  for (const p of todayPrices) {
+    if (!pricesBySupermarket[p.supermarket]) {
+      pricesBySupermarket[p.supermarket] = [];
+    }
+    pricesBySupermarket[p.supermarket].push(p);
+  }
+
+  const productRows = productSummaries.map((p, i) => `
+    <tr style="background: ${i % 2 === 0 ? '#F8FFF8' : '#FFFFFF'};">
+      <td style="padding: 12px; border: 1px solid #C8E6C9; font-weight: bold;">${p.product}</td>
+      <td style="padding: 12px; border: 1px solid #C8E6C9; text-align: right; font-size: 18px; color: #2E7D32;">
+        Gs. ${p.median.toLocaleString()}
+      </td>
+      <td style="padding: 12px; border: 1px solid #C8E6C9; text-align: right; color: #666;">
+        ${p.min.toLocaleString()} - ${p.max.toLocaleString()}
+      </td>
+      <td style="padding: 12px; border: 1px solid #C8E6C9; text-align: center;">${p.priceCount}</td>
+      <td style="padding: 12px; border: 1px solid #C8E6C9; font-size: 12px; color: #666;">
+        ${p.sources.join(', ')}
+      </td>
+    </tr>
+  `).join('');
+
+  const supermarketSections = Object.entries(pricesBySupermarket).map(([supermarket, prices]) => `
+    <div style="margin-bottom: 20px;">
+      <h4 style="color: #1565C0; margin: 0 0 10px;">🏪 ${supermarket}</h4>
+      <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+        <tr style="background: #E3F2FD;">
+          <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Producto</th>
+          <th style="padding: 8px; border: 1px solid #ddd; text-align: right;">Precio</th>
+          <th style="padding: 8px; border: 1px solid #ddd; text-align: center;">Unidad</th>
+        </tr>
+        ${prices.map(p => `
+        <tr>
+          <td style="padding: 8px; border: 1px solid #ddd;">${p.product_name_raw || p.product}</td>
+          <td style="padding: 8px; border: 1px solid #ddd; text-align: right; font-weight: bold;">
+            Gs. ${(p.price_guaranies || p.price || 0).toLocaleString()}
+          </td>
+          <td style="padding: 8px; border: 1px solid #ddd; text-align: center;">${p.unit || 'kg'}</td>
+        </tr>
+        `).join('')}
+      </table>
+    </div>
+  `).join('');
+
+  const alertsHtml = alerts.length > 0 ? `
+    <div style="background: #FFF3E0; border: 1px solid #FFB74D; border-radius: 8px; padding: 15px; margin-top: 20px;">
+      <h3 style="color: #E65100; margin: 0 0 10px;">⚠️ Alertas Recientes</h3>
+      <ul style="margin: 0; padding-left: 20px;">
+        ${alerts.map(a => `<li style="margin: 5px 0;">${a.message} <span style="color: #999; font-size: 11px;">(${new Date(a.created_at).toLocaleDateString('es-PY')})</span></li>`).join('')}
+      </ul>
+    </div>
+  ` : '';
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px;">
+
+  <!-- Header -->
+  <div style="background: linear-gradient(135deg, #2E7D32, #4CAF50); color: white; padding: 25px; text-align: center; border-radius: 12px 12px 0 0;">
+    <h1 style="margin: 0; font-size: 24px;">📊 AURELIO - Resumen Diario</h1>
+    <p style="margin: 5px 0 0; font-size: 14px; opacity: 0.9;">Inteligencia de Precios | HidroBio S.A.</p>
+    <p style="margin: 15px 0 0; font-size: 13px; background: rgba(255,255,255,0.2); display: inline-block; padding: 5px 15px; border-radius: 20px;">
+      📅 ${date}
+    </p>
+  </div>
+
+  <!-- Quick Stats -->
+  <div style="display: flex; flex-wrap: wrap; background: #E8F5E9; padding: 15px; border-radius: 0 0 12px 12px; margin-bottom: 20px;">
+    <div style="flex: 1; min-width: 100px; text-align: center; padding: 10px;">
+      <div style="font-size: 28px; font-weight: bold; color: #2E7D32;">${todayPrices.length}</div>
+      <div style="font-size: 12px; color: #666;">Precios Recolectados</div>
+    </div>
+    <div style="flex: 1; min-width: 100px; text-align: center; padding: 10px;">
+      <div style="font-size: 28px; font-weight: bold; color: #2E7D32;">${Object.keys(pricesBySupermarket).length}</div>
+      <div style="font-size: 12px; color: #666;">Supermercados</div>
+    </div>
+    <div style="flex: 1; min-width: 100px; text-align: center; padding: 10px;">
+      <div style="font-size: 28px; font-weight: bold; color: #2E7D32;">${productSummaries.length}</div>
+      <div style="font-size: 12px; color: #666;">Productos</div>
+    </div>
+  </div>
+
+  <!-- Market Snapshot -->
+  <h2 style="color: #2E7D32; border-bottom: 2px solid #4CAF50; padding-bottom: 10px; margin-top: 30px;">
+    📈 Snapshot del Mercado
+  </h2>
+  <p style="color: #666; font-size: 14px; margin-bottom: 15px;">
+    Precios medianos de supermercados en Asunción - actualizado hoy a las 05:00
+  </p>
+
+  <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
+    <tr style="background: #4CAF50; color: white;">
+      <th style="padding: 12px; border: 1px solid #2E7D32; text-align: left;">Producto</th>
+      <th style="padding: 12px; border: 1px solid #2E7D32; text-align: right;">Mediana</th>
+      <th style="padding: 12px; border: 1px solid #2E7D32; text-align: right;">Rango</th>
+      <th style="padding: 12px; border: 1px solid #2E7D32; text-align: center;"># Precios</th>
+      <th style="padding: 12px; border: 1px solid #2E7D32; text-align: left;">Fuentes</th>
+    </tr>
+    ${productRows}
+  </table>
+
+  ${alertsHtml}
+
+  <!-- Raw Prices by Supermarket -->
+  <div style="margin-top: 30px; border: 1px solid #ddd; border-radius: 8px; overflow: hidden;">
+    <div style="background: #1565C0; color: white; padding: 15px;">
+      <h3 style="margin: 0;">🏪 Detalle por Supermercado</h3>
+    </div>
+    <div style="padding: 15px; background: #FAFAFA;">
+      ${supermarketSections || '<p>No hay precios disponibles</p>'}
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="text-align: center; margin-top: 30px; padding: 20px; background: #F5F5F5; border-radius: 8px;">
+    <p style="margin: 0; color: #666; font-size: 12px;">
+      🌿 Generado por <strong>Aurelio</strong> - Inteligencia de Precios<br>
+      <strong>HidroBio S.A.</strong> | Nueva Italia, Paraguay<br>
+      <span style="color: #999;">${new Date().toLocaleString('es-PY')}</span>
+    </p>
+    <p style="margin: 10px 0 0; color: #999; font-size: 11px;">
+      Este reporte se genera automáticamente todos los días a las 05:00 PYT
+    </p>
+  </div>
+
+</body>
+</html>
+  `;
+}
+
+/**
+ * Generate a comprehensive weekly report for the team
+ * Shows: full analysis, pricing recommendations, sales comparison, trends
+ */
+async function generateWeeklyTeamReport() {
+  loadEnvCredentials();
+
+  const db = new PriceDatabase();
+  const date = new Date().toLocaleDateString('es-PY', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  try {
+    // Get today's prices
+    const todayPrices = db.getTodayPrices();
+
+    // Run full AI analysis
+    console.log('[Aurelio] 🧠 Ejecutando análisis completo con IA...');
+    const analysis = await analyzeWithClaude(db, todayPrices);
+
+    // Generate the full weekly report (reuse existing function)
+    await sendEmailReport(analysis, todayPrices);
+
+    console.log(`[Aurelio] ✅ Reporte semanal enviado para ${date}`);
+    return { success: true, date, analysis };
+
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Generate an introduction email to present Aurelio to the team
+ */
+async function sendAurelioIntroduction() {
+  loadEnvCredentials();
+
+  const db = new PriceDatabase();
+  const date = new Date().toLocaleDateString('es-PY', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+
+  try {
+    const todayPrices = db.getTodayPrices();
+
+    // Group prices by product for stats
+    const pricesByProduct = {};
+    for (const p of todayPrices) {
+      if (!pricesByProduct[p.product]) {
+        pricesByProduct[p.product] = [];
+      }
+      pricesByProduct[p.product].push(p);
+    }
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px;">
+
+  <!-- Header with Avatar -->
+  <div style="background: linear-gradient(135deg, #1B5E20, #2E7D32, #4CAF50); color: white; padding: 40px; text-align: center; border-radius: 16px 16px 0 0;">
+    <div style="width: 120px; height: 120px; background: white; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 20px rgba(0,0,0,0.2);">
+      <span style="font-size: 60px;">🌿</span>
+    </div>
+    <h1 style="margin: 0; font-size: 32px; text-shadow: 2px 2px 4px rgba(0,0,0,0.2);">Hola, soy Aurelio</h1>
+    <p style="margin: 10px 0 0; font-size: 18px; opacity: 0.95;">Tu nuevo especialista en inteligencia de precios</p>
+  </div>
+
+  <!-- Introduction -->
+  <div style="background: #F1F8E9; padding: 30px; border-left: 4px solid #4CAF50;">
+    <h2 style="color: #2E7D32; margin-top: 0;">👋 ¡Mucho gusto, equipo HidroBio!</h2>
+    <p style="font-size: 16px; color: #333;">
+      Mi nombre viene de <strong>Marco Aurelio</strong>, el emperador filósofo romano,
+      conocido por su sabiduría, pensamiento estratégico y disciplina en el análisis.
+    </p>
+    <p style="font-size: 16px; color: #333;">
+      A partir de hoy, estaré trabajando 24/7 para monitorear los precios del mercado
+      y ayudarles a tomar decisiones estratégicas de pricing.
+    </p>
+  </div>
+
+  <!-- What I Do -->
+  <div style="padding: 30px 0;">
+    <h2 style="color: #2E7D32; border-bottom: 2px solid #4CAF50; padding-bottom: 10px;">
+      🎯 ¿Qué hago por ustedes?
+    </h2>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-top: 20px;">
+      <div style="flex: 1; min-width: 250px; background: white; border: 1px solid #C8E6C9; border-radius: 12px; padding: 20px;">
+        <div style="font-size: 40px; margin-bottom: 10px;">📡</div>
+        <h3 style="color: #2E7D32; margin: 0 0 10px;">Monitoreo Diario</h3>
+        <p style="color: #666; margin: 0; font-size: 14px;">
+          Todos los días a las <strong>05:00</strong> escaneo 4+ supermercados
+          y recolecto precios de tomates, locotes y lechugas.
+        </p>
+      </div>
+
+      <div style="flex: 1; min-width: 250px; background: white; border: 1px solid #C8E6C9; border-radius: 12px; padding: 20px;">
+        <div style="font-size: 40px; margin-bottom: 10px;">🧠</div>
+        <h3 style="color: #2E7D32; margin: 0 0 10px;">Análisis con IA</h3>
+        <p style="color: #666; margin: 0; font-size: 14px;">
+          Uso Claude (inteligencia artificial) para analizar tendencias,
+          calcular medianas y generar recomendaciones estratégicas.
+        </p>
+      </div>
+
+      <div style="flex: 1; min-width: 250px; background: white; border: 1px solid #C8E6C9; border-radius: 12px; padding: 20px;">
+        <div style="font-size: 40px; margin-bottom: 10px;">💰</div>
+        <h3 style="color: #2E7D32; margin: 0 0 10px;">Pricing por Segmento</h3>
+        <p style="color: #666; margin: 0; font-size: 14px;">
+          Genero bandas de precios B2B para cada segmento:
+          Consumidor Final, HORECA, Supermercados e Institucional.
+        </p>
+      </div>
+
+      <div style="flex: 1; min-width: 250px; background: white; border: 1px solid #C8E6C9; border-radius: 12px; padding: 20px;">
+        <div style="font-size: 40px; margin-bottom: 10px;">📧</div>
+        <h3 style="color: #2E7D32; margin: 0 0 10px;">Reportes Semanales</h3>
+        <p style="color: #666; margin: 0; font-size: 14px;">
+          Cada <strong>jueves a las 15:00</strong> envío un reporte completo
+          con análisis, recomendaciones y comparación de ventas.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pricing Strategy -->
+  <div style="background: #E8F5E9; border-radius: 12px; padding: 25px; margin: 20px 0;">
+    <h2 style="color: #2E7D32; margin-top: 0;">📊 Mi Estrategia de Precios</h2>
+    <p style="color: #555; font-size: 15px;">
+      Aplico la filosofía de <strong>"% de mediana del mercado"</strong> - no cost-plus.
+      HidroBio debe posicionarse como premium pero competitivo:
+    </p>
+
+    <table style="width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px;">
+      <tr style="background: #4CAF50; color: white;">
+        <th style="padding: 10px; border: 1px solid #2E7D32;">Segmento</th>
+        <th style="padding: 10px; border: 1px solid #2E7D32;">% Mediana</th>
+        <th style="padding: 10px; border: 1px solid #2E7D32;">Margen Mín.</th>
+        <th style="padding: 10px; border: 1px solid #2E7D32;">Estrategia</th>
+      </tr>
+      <tr style="background: #F8FFF8;">
+        <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐⭐⭐⭐ Consumidor Final</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">85-95%</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">25%</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9;">Mejor margen directo</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐⭐⭐ HORECA</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">70-80%</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">20%</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9;">Volumen consistente</td>
+      </tr>
+      <tr style="background: #F8FFF8;">
+        <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐⭐ Supermercados</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">60-75%</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">15%</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9;">Volumen alto</td>
+      </tr>
+      <tr>
+        <td style="padding: 10px; border: 1px solid #C8E6C9;">⭐⭐ Institucional</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">55-65%</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9; text-align: center;">10%</td>
+        <td style="padding: 10px; border: 1px solid #C8E6C9;">Contratos anuales</td>
+      </tr>
+      <tr style="background: #FFF3E0;">
+        <td style="padding: 10px; border: 1px solid #FFB74D;">⚠️ Mayorista</td>
+        <td style="padding: 10px; border: 1px solid #FFB74D; text-align: center;">45-55%</td>
+        <td style="padding: 10px; border: 1px solid #FFB74D; text-align: center;">5%</td>
+        <td style="padding: 10px; border: 1px solid #FFB74D; color: #E65100; font-weight: bold;">EVITAR</td>
+      </tr>
+    </table>
+
+    <div style="background: #FFF9C4; border-left: 4px solid #FBC02D; padding: 15px; margin-top: 20px; border-radius: 4px;">
+      <strong style="color: #F57F17;">⚠️ Regla de Oro:</strong>
+      <span style="color: #555;">El <strong>Piso Absoluto</strong> es sagrado - nunca recomiendo vender por debajo del costo + margen mínimo.</span>
+    </div>
+  </div>
+
+  <!-- Current Status -->
+  <div style="padding: 25px 0;">
+    <h2 style="color: #2E7D32; border-bottom: 2px solid #4CAF50; padding-bottom: 10px;">
+      📈 Estado Actual del Sistema
+    </h2>
+
+    <div style="display: flex; flex-wrap: wrap; background: #E8F5E9; padding: 20px; border-radius: 12px; margin-top: 15px;">
+      <div style="flex: 1; min-width: 120px; text-align: center; padding: 15px;">
+        <div style="font-size: 36px; font-weight: bold; color: #2E7D32;">${todayPrices.length}</div>
+        <div style="font-size: 13px; color: #666;">Precios en BD Hoy</div>
+      </div>
+      <div style="flex: 1; min-width: 120px; text-align: center; padding: 15px;">
+        <div style="font-size: 36px; font-weight: bold; color: #2E7D32;">${Object.keys(pricesByProduct).length}</div>
+        <div style="font-size: 13px; color: #666;">Productos Monitoreados</div>
+      </div>
+      <div style="flex: 1; min-width: 120px; text-align: center; padding: 15px;">
+        <div style="font-size: 36px; font-weight: bold; color: #2E7D32;">4</div>
+        <div style="font-size: 13px; color: #666;">Supermercados</div>
+      </div>
+      <div style="flex: 1; min-width: 120px; text-align: center; padding: 15px;">
+        <div style="font-size: 36px; font-weight: bold; color: #4CAF50;">✓</div>
+        <div style="font-size: 13px; color: #666;">Sistema Operativo</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Schedule -->
+  <div style="background: white; border: 2px solid #4CAF50; border-radius: 12px; padding: 25px; margin: 20px 0;">
+    <h2 style="color: #2E7D32; margin-top: 0;">📅 Mi Horario de Trabajo</h2>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 20px;">
+      <div style="flex: 1; min-width: 200px;">
+        <div style="background: #E3F2FD; padding: 15px; border-radius: 8px; border-left: 4px solid #1565C0;">
+          <h4 style="color: #1565C0; margin: 0 0 5px;">📊 Recolección Diaria</h4>
+          <p style="margin: 0; font-size: 14px; color: #333;">
+            <strong>Todos los días - 05:00 PYT</strong><br>
+            Escaneo supermercados, guardo precios, sincronizo con Zoho Analytics
+          </p>
+        </div>
+      </div>
+      <div style="flex: 1; min-width: 200px;">
+        <div style="background: #F3E5F5; padding: 15px; border-radius: 8px; border-left: 4px solid #7B1FA2;">
+          <h4 style="color: #7B1FA2; margin: 0 0 5px;">📧 Análisis Semanal</h4>
+          <p style="margin: 0; font-size: 14px; color: #333;">
+            <strong>Jueves - 15:00 PYT</strong><br>
+            Análisis completo con IA, comparación de ventas, reporte por email
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contact -->
+  <div style="background: #FAFAFA; border-radius: 12px; padding: 25px; margin: 20px 0; text-align: center;">
+    <h2 style="color: #2E7D32; margin-top: 0;">💬 ¿Preguntas?</h2>
+    <p style="color: #666; font-size: 15px; margin-bottom: 20px;">
+      Si tienen dudas sobre mis reportes o quieren ajustar la estrategia de precios,
+      contacten a Daniel Stanca quien puede reconfigurar mis parámetros.
+    </p>
+    <p style="margin: 0; color: #999; font-size: 13px;">
+      daniel.stanca@hidrobio.com.py
+    </p>
+  </div>
+
+  <!-- Footer -->
+  <div style="text-align: center; margin-top: 30px; padding: 25px; background: linear-gradient(135deg, #2E7D32, #4CAF50); border-radius: 12px; color: white;">
+    <p style="margin: 0; font-size: 18px; font-weight: bold;">
+      ¡Estoy listo para trabajar! 🌿
+    </p>
+    <p style="margin: 10px 0 0; font-size: 14px; opacity: 0.9;">
+      <strong>Aurelio</strong> - Inteligencia de Precios | HidroBio S.A.<br>
+      ${date}
+    </p>
+  </div>
+
+</body>
+</html>
+    `;
+
+    const subject = `🌿 ¡Hola Equipo! Soy Aurelio, su nuevo especialista en precios`;
+    await sendTeamEmail(subject, html);
+
+    console.log('[Aurelio] ✅ Email de introducción enviado al equipo');
+    return { success: true };
+
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Helper function to send team emails
+ */
+async function sendTeamEmail(subject, htmlContent) {
+  const credentials = loadZohoCredentials();
+  const smtpUser = credentials.ZOHO_SMTP_USER || process.env.SMTP_USER;
+  const smtpPassword = credentials.ZOHO_SMTP_PASSWORD || process.env.SMTP_PASSWORD;
+  const emailTo = credentials.EMAIL_TO || process.env.EMAIL_TO || 'daniel@hidrobio.com.py';
+  const emailFrom = credentials.EMAIL_FROM || process.env.EMAIL_FROM || smtpUser;
+
+  console.log(`[Aurelio] 📧 Preparando email...`);
+  console.log(`[Aurelio]    De: ${emailFrom}`);
+  console.log(`[Aurelio]    Para: ${emailTo}`);
+  console.log(`[Aurelio]    Asunto: ${subject}`);
+
+  if (!smtpUser || !smtpPassword) {
+    console.log('[Aurelio] ⚠️ Email no configurado - imprimiendo a consola');
+    console.log(`Subject: ${subject}`);
+    console.log('HTML content generated (use --intro with email config to send)');
+    return false;
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: 'smtp.zoho.com',
+      port: 465,
+      secure: true,
+      auth: { user: smtpUser, pass: smtpPassword },
+      tls: { rejectUnauthorized: false }
+    });
+
+    console.log(`[Aurelio] 🔗 Conectando a smtp.zoho.com:465...`);
+
+    const info = await transporter.sendMail({
+      from: `"Aurelio - HidroBio" <${emailFrom}>`,
+      to: emailTo,
+      subject: subject,
+      html: htmlContent
+    });
+
+    console.log(`[Aurelio] ✅ Email enviado! Message ID: ${info.messageId}`);
+    console.log(`[Aurelio]    Response: ${info.response}`);
+    return true;
+
+  } catch (error) {
+    console.error(`[Aurelio] ❌ Error enviando email: ${error.message}`);
+    console.error(`[Aurelio]    Stack: ${error.stack}`);
+    return false;
+  }
+}
+
+// =============================================================================
 // ENTRY POINT
 // =============================================================================
 
@@ -2803,10 +3419,34 @@ Opciones:
   --daemon, -d     Modo daemon para Railway (programado + heartbeat)
   --help, -h       Mostrar esta ayuda
 
+Reportes para el equipo:
+  --intro          Enviar email de introducción al equipo (presenta a Aurelio)
+  --daily-report   Generar y enviar reporte diario (snapshot del mercado)
+  --weekly-report  Generar y enviar reporte semanal completo (análisis + recomendaciones)
+
 Programación:
   - Diario 05:00 PYT: Recolección de precios (alerta si hay errores)
   - Jueves 15:00 PYT: Análisis semanal completo + comparación ventas + email
 `);
+    return;
+  }
+
+  // Team report commands
+  if (args.includes('--intro')) {
+    console.log('[Aurelio] Modo: Enviar introducción al equipo');
+    await sendAurelioIntroduction();
+    return;
+  }
+
+  if (args.includes('--daily-report')) {
+    console.log('[Aurelio] Modo: Generar reporte diario');
+    await generateDailyTeamReport();
+    return;
+  }
+
+  if (args.includes('--weekly-report')) {
+    console.log('[Aurelio] Modo: Generar reporte semanal');
+    await generateWeeklyTeamReport();
     return;
   }
 
