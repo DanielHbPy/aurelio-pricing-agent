@@ -1,15 +1,22 @@
-# Railway deployment configuration for Aurelio Pricing Agent
+# Railway deployment configuration for Aurelio Pricing System
 # HidroBio S.A. - Elite Pricing Intelligence
+#
+# This runs both:
+# 1. Aurelio daemon (scheduled scraping + weekly analysis)
+# 2. Dashboard web server (protected by Zoho OAuth)
 
 [build]
 builder = "nixpacks"
 
 [deploy]
-startCommand = "node aurelio.mjs --daemon"
+startCommand = "node index.mjs"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
-# No healthcheck - this is a scheduled daemon, not a web service
+# Health check for the dashboard web server
+healthcheckPath = "/api/health"
+healthcheckTimeout = 30
 
 [env]
 NODE_ENV = "production"
 TZ = "America/Asuncion"
+PORT = "3000"

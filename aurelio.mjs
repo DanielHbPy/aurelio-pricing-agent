@@ -179,21 +179,38 @@ const CONFIG = {
     },
     {
       name: 'Biggie',
-      enabled: false,  // Disabled - requires browser automation (Vue SPA)
+      enabled: true,  // Enabled 2026-01-28 - discovered public API at api.app.biggie.com.py
       baseUrl: 'https://www.biggie.com.py',
-      // Biggie uses category browsing, not search
-      categoryUrl: 'https://www.biggie.com.py/products/fruteria-y-verduleria?skip=0',
+      apiUrl: 'https://api.app.biggie.com.py/api/articles?take=100&skip=0&classificationName=fruteria-y-verduleria',
       scraper: 'biggie',
-      notes: 'Vue/Nuxt SPA - API not public, needs Playwright/Puppeteer'
+      notes: 'Vue/Nuxt SPA with public API - no browser automation needed'
     },
     {
       name: 'Salemma',
-      enabled: true,
+      enabled: false,  // Disabled 2026-01-28 - server has broken www→non-www redirect (drops / before path)
       baseUrl: 'https://www.salemmaonline.com.py',
       searchUrl: 'https://www.salemmaonline.com.py/buscar?criterio={query}',
       categoryUrl: 'https://www.salemmaonline.com.py/frutas-y-verduras/verduras',
       scraper: 'salemma',
-      notes: 'Laravel-based, category browsing recommended'
+      notes: 'DISABLED: Apache redirect bug creates invalid URLs (salemmaonline.com.pyfrutas... missing /)'
+    },
+    {
+      name: 'Supermas',
+      enabled: true,  // Added 2026-01-28 - clean HTML category pages
+      baseUrl: 'https://www.supermas.com.py',
+      categoryUrl: 'https://www.supermas.com.py/catalogo/frutas-y-verduras-c36',
+      scraper: 'supermas',
+      notes: 'PHP-based ecommerce, reliable HTML scraping'
+    },
+    {
+      name: 'Real',
+      enabled: true,  // Added 2026-01-28 - Instaleap GraphQL API reverse-engineered
+      baseUrl: 'https://www.realonline.com.py',
+      apiUrl: 'https://nextgentheadless.instaleap.io/api/v3',
+      clientId: 'CADENA_REAL',
+      storeReference: '2',
+      scraper: 'real',
+      notes: 'Instaleap headless commerce - GraphQL API'
     }
   ],
 
@@ -279,12 +296,20 @@ const CONFIG = {
 
 class PriceDatabase {
   constructor() {
-    const dataDir = join(__dirname, 'data');
+    // Check for Railway volume mount first, then fallback to local data directory
+    const railwayDataDir = '/app/data';
+    const localDataDir = join(__dirname, 'data');
+
+    // Use Railway volume if it exists, otherwise use local
+    const dataDir = existsSync(railwayDataDir) ? railwayDataDir : localDataDir;
+
     if (!existsSync(dataDir)) {
       mkdirSync(dataDir, { recursive: true });
     }
 
-    this.db = new Database(join(dataDir, 'aurelio.db'));
+    const dbPath = join(dataDir, 'aurelio.db');
+    console.log(`[Aurelio] Database path: ${dbPath}`);
+    this.db = new Database(dbPath);
     this.initSchema();
   }
 
@@ -330,6 +355,20 @@ class PriceDatabase {
       CREATE INDEX IF NOT EXISTS idx_prices_date ON prices(date);
       CREATE INDEX IF NOT EXISTS idx_prices_product ON prices(product);
       CREATE INDEX IF NOT EXISTS idx_analysis_date ON analysis(date);
+
+      CREATE TABLE IF NOT EXISTS weekly_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        week_start TEXT NOT NULL,
+        week_end TEXT NOT NULL,
+        analysis_json TEXT NOT NULL,
+        prices_count INTEGER,
+        supermarkets_count INTEGER,
+        products_count INTEGER,
+        generated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(week_start)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_weekly_reports_week ON weekly_reports(week_start);
     `);
   }
 
@@ -408,6 +447,47 @@ class PriceDatabase {
       WHERE date >= ?
       ORDER BY created_at DESC
     `).all(sinceStr);
+  }
+
+  /**
+   * Save full weekly analysis report (for dashboard)
+   */
+  saveWeeklyReport(analysis, pricesCount, supermarketsCount, productsCount) {
+    const now = new Date();
+    // Get start of week (Monday)
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - now.getDay() + 1);
+    const weekStartStr = weekStart.toISOString().split('T')[0];
+
+    // Get end of week (Sunday)
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 6);
+    const weekEndStr = weekEnd.toISOString().split('T')[0];
+
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO weekly_reports
+      (week_start, week_end, analysis_json, prices_count, supermarkets_count, products_count)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      weekStartStr,
+      weekEndStr,
+      JSON.stringify(analysis),
+      pricesCount,
+      supermarketsCount,
+      productsCount
+    );
+  }
+
+  /**
+   * Get latest weekly report (for dashboard)
+   */
+  getLatestWeeklyReport() {
+    return this.db.prepare(`
+      SELECT * FROM weekly_reports
+      ORDER BY generated_at DESC
+      LIMIT 1
+    `).get();
   }
 
   close() {
@@ -839,73 +919,49 @@ const SCRAPERS = {
 
   /**
    * Biggie.com.py scraper (Vue/Nuxt SPA)
-   * Uses internal API endpoint to fetch products
+   * Uses public API endpoint: https://api.app.biggie.com.py/api/articles
+   * Discovered 2026-01-28 via Chrome network inspection
    */
   async biggie(config, query) {
     const results = [];
 
     try {
-      // Biggie exposes an API for products - try to hit the category endpoint
-      // The SPA fetches from an API, let's try the direct API call
-      const apiUrl = 'https://api.biggie.com.py/api/v1/products';
+      // Biggie public API - fetches all products from fruteria-y-verduleria category
+      // API returns: { items: [...], count: N }
+      // Each item has: id, code, name, price, unitOfMeasure, brand, family, images
+      const apiUrl = 'https://api.app.biggie.com.py/api/articles?take=100&skip=0&classificationName=fruteria-y-verduleria';
 
-      // First try: category-based browsing (more reliable)
-      const categoryResponse = await fetch(
-        `https://api.biggie.com.py/api/v1/classifications/fruteria-y-verduleria/products?skip=0&take=100`,
-        {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
-            'Origin': 'https://www.biggie.com.py',
-            'Referer': 'https://www.biggie.com.py/'
-          },
-          timeout: 30000
-        }
-      );
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      if (categoryResponse.ok) {
-        const data = await categoryResponse.json();
-        const products = data.products || data.items || data || [];
+      const response = await fetch(apiUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json',
+          'Origin': 'https://biggie.com.py',
+          'Referer': 'https://biggie.com.py/'
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        const products = data.items || [];
+
+        const queryLower = query.toLowerCase();
 
         for (const p of products) {
-          const name = p.name || p.title || p.description || '';
-          const price = p.price || p.finalPrice || p.salePrice || 0;
-
-          // Filter by query if provided
-          const queryLower = query.toLowerCase();
+          const name = p.name || '';
+          const price = p.price || 0;
           const nameLower = name.toLowerCase();
 
-          if (nameLower.includes(queryLower.split(' ')[0]) && price && isFreshProduce(name)) {
-            results.push({
-              supermarket: config.name,
-              name: name.trim(),
-              price: typeof price === 'number' ? price : extractPrice(String(price)),
-              unit: detectUnit(name)
-            });
-          }
-        }
-      } else {
-        // Fallback: try search endpoint
-        const searchResponse = await fetch(
-          `https://api.biggie.com.py/api/v1/products/search?q=${encodeURIComponent(query)}`,
-          {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              'Accept': 'application/json'
-            },
-            timeout: 30000
-          }
-        );
-
-        if (searchResponse.ok) {
-          const data = await searchResponse.json();
-          const products = data.products || data.items || data || [];
-
-          for (const p of products) {
-            const name = p.name || p.title || '';
-            const price = p.price || p.finalPrice || 0;
-
-            if (name && price && isFreshProduce(name)) {
+          // Filter by query - match first word of query
+          const queryFirstWord = queryLower.split(' ')[0];
+          if (nameLower.includes(queryFirstWord) && price && isFreshProduce(name)) {
+            // Avoid duplicates
+            if (!results.some(r => r.name === name)) {
               results.push({
                 supermarket: config.name,
                 name: name.trim(),
@@ -915,10 +971,15 @@ const SCRAPERS = {
             }
           }
         }
+      } else {
+        console.error(`[Aurelio] Biggie API returned ${response.status}: ${response.statusText}`);
       }
     } catch (error) {
-      console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
-      // Biggie API might not be publicly accessible - that's OK, we have other sources
+      if (error.name === 'AbortError') {
+        console.error(`[Aurelio] Biggie API request timed out`);
+      } else {
+        console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
+      }
     }
 
     return results;
@@ -987,6 +1048,178 @@ const SCRAPERS = {
 
     } catch (error) {
       console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
+    }
+
+    return results;
+  },
+
+  /**
+   * Supermas.com.py scraper (PHP-based ecommerce)
+   * Added 2026-01-28 - Clean HTML structure
+   * Structure: div.product container
+   *            h2.woocommerce-loop-product__title for name
+   *            span.amount for price (format: "₲. 18.900")
+   */
+  async supermas(config, query) {
+    const results = [];
+
+    try {
+      const categoryUrl = config.categoryUrl || 'https://www.supermas.com.py/catalogo/frutas-y-verduras-c36';
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+      const response = await fetch(categoryUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'es-PY,es;q=0.9,en;q=0.8'
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      const html = await response.text();
+      const $ = cheerio.load(html);
+
+      // Find all products in the category page
+      $('div.product').each((_, el) => {
+        const $el = $(el);
+
+        // Get product name from h2.woocommerce-loop-product__title
+        const name = $el.find('h2.woocommerce-loop-product__title').text().trim();
+
+        // Get price from span.amount (skip empty <ins> amounts for discounted prices)
+        // Take the last non-empty amount which is the current price
+        let price = 0;
+        $el.find('span.amount').each((_, priceEl) => {
+          const priceText = $(priceEl).text().trim();
+          if (priceText) {
+            const extracted = extractPrice(priceText);
+            if (extracted > 0) {
+              price = extracted;
+            }
+          }
+        });
+
+        // Filter by query
+        const queryLower = query.toLowerCase();
+        const nameLower = name.toLowerCase();
+
+        if (name && price && nameLower.includes(queryLower.split(' ')[0]) && isFreshProduce(name)) {
+          // Avoid duplicates
+          if (!results.some(r => r.name === name)) {
+            results.push({
+              supermarket: config.name,
+              name: name.trim(),
+              price,
+              unit: detectUnit(name)
+            });
+          }
+        }
+      });
+
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.error(`[Aurelio] Supermas request timed out`);
+      } else {
+        console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
+      }
+    }
+
+    return results;
+  },
+
+  /**
+   * Real Online (Cadena Real) - Instaleap GraphQL API
+   * API discovered via reverse engineering 2026-01-28
+   * Endpoint: https://nextgentheadless.instaleap.io/api/v3
+   */
+  async real(config, query) {
+    const results = [];
+
+    try {
+      const apiUrl = config.apiUrl || 'https://nextgentheadless.instaleap.io/api/v3';
+      const clientId = config.clientId || 'CADENA_REAL';
+      const storeReference = config.storeReference || '2';
+
+      // GraphQL query for product search
+      const graphqlQuery = {
+        query: `query SearchProducts($input: SearchProductsInput!) {
+          searchProducts(searchProductsInput: $input) {
+            products {
+              name
+              price
+              description
+            }
+          }
+        }`,
+        variables: {
+          input: {
+            pageSize: 50,
+            currentPage: 1,
+            storeReference: storeReference,
+            search: [{ query: query }],
+            clientId: clientId
+          }
+        }
+      };
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json',
+          'Origin': 'https://www.realonline.com.py',
+          'Referer': 'https://www.realonline.com.py/'
+        },
+        body: JSON.stringify(graphqlQuery),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        const products = data?.data?.searchProducts?.products || [];
+
+        for (const product of products) {
+          const name = product.name || '';
+          // Price is already in Guaranies (e.g., 19950 = Gs. 19,950)
+          const price = product.price || 0;
+
+          // Filter for fresh produce only
+          if (name && price > 0 && isFreshProduce(name)) {
+            // Avoid duplicates
+            if (!results.some(r => r.name === name)) {
+              // Normalize price per kg for packaged products
+              const normalized = normalizePricePerKg(name, price);
+              results.push({
+                supermarket: config.name,
+                name: name.trim(),
+                price: normalized.price,
+                unit: detectUnit(name),
+                originalPrice: normalized.normalized ? normalized.originalPrice : undefined,
+                packageSize: normalized.packageSize
+              });
+            }
+          }
+        }
+      } else {
+        console.error(`[Aurelio] Real API returned ${response.status}`);
+      }
+
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.error(`[Aurelio] Real request timed out`);
+      } else {
+        console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
+      }
     }
 
     return results;
@@ -1095,6 +1328,7 @@ function detectUnit(name) {
 /**
  * Normalize price to per-kg for products sold by weight
  * Detects package sizes like "300 g", "500g", "1 kg" and converts
+ * Also handles "bandeja" products (typically 300g trays for cherry tomatoes)
  */
 function normalizePricePerKg(name, price) {
   const nameLower = name.toLowerCase();
@@ -1133,6 +1367,51 @@ function normalizePricePerKg(name, price) {
         originalPrice: price
       };
     }
+  }
+
+  // ==========================================================================
+  // BANDEJA NORMALIZATION - Based on Paraguay market research (Jan 2026)
+  // Standard bandeja sizes:
+  // - Cherry tomato: 250g (small), 300g (standard), 500g (family)
+  // - Lettuce: 200-250g per head (sold per unit, not normalized to kg)
+  // - Herbs (albahaca, cilantro): 30-50g (sold per unit)
+  // ==========================================================================
+
+  // Cherry tomato bandejas - normalize to per kg
+  // Research: Casa Rica 300g, EcoAgro 500g, standard market 250-300g
+  if (nameLower.includes('cherry')) {
+    const isBandeja = nameLower.includes('bandeja') || nameLower.includes('pack') ||
+                      nameLower.includes('caja') || nameLower.includes('paquete');
+
+    // Price heuristic for cherry tomatoes without explicit weight:
+    // - Per bandeja (250-300g): typically 8,000-20,000 Gs
+    // - Per kg: typically 35,000-60,000 Gs
+    // If no weight detected and price suggests per-bandeja, normalize
+    if (isBandeja || (price >= 8000 && price <= 25000)) {
+      // Check if it's likely a 500g pack (higher price point: 15,000-25,000)
+      const assumedGrams = (price >= 15000 && price <= 25000) ? 500 : 300;
+      const pricePerKg = Math.round(price * (1000 / assumedGrams));
+      return {
+        price: pricePerKg,
+        normalized: true,
+        packageSize: `~${assumedGrams}g bandeja`,
+        originalPrice: price,
+        estimated: true
+      };
+    }
+  }
+
+  // Lettuce and herbs in bandejas - keep as unit price, don't normalize to kg
+  // These products are sold per mazo/unidad, not by weight
+  const unitProducts = ['lechuga', 'albahaca', 'cilantro', 'perejil', 'rucula', 'rúcula',
+                        'acelga', 'espinaca', 'kale', 'berro'];
+  if (unitProducts.some(p => nameLower.includes(p))) {
+    return { price, normalized: false, packageSize: null, unit: 'unidad' };
+  }
+
+  // Other bandeja products without explicit weight - return as-is with note
+  if (nameLower.includes('bandeja')) {
+    return { price, normalized: false, packageSize: 'bandeja', unit: 'unidad' };
   }
 
   return { price, normalized: false, packageSize: null };
@@ -1487,6 +1766,292 @@ async function getWeeklySalesPrices() {
 }
 
 // =============================================================================
+// CUSTOMER ANALYSIS - CRM Segments and Lifecycle Integration
+// =============================================================================
+
+/**
+ * Fetch customer analysis data from Zoho CRM
+ * Uses lifecycle stages from the lifecycle-monitor agent and segments
+ * Returns engagement metrics and segment breakdown of weekly sales
+ */
+async function getCustomerAnalysis(invoices) {
+  const credentials = loadZohoCredentials();
+
+  if (!credentials.ZOHO_REFRESH_TOKEN) {
+    console.log('[Aurelio] ⚠️ Sin credenciales para consultar CRM');
+    return null;
+  }
+
+  try {
+    const accessToken = await getZohoAccessToken(credentials);
+    const dc = credentials.ZOHO_DC || '.com';
+
+    // Fetch CRM accounts with segment and lifecycle data
+    const fields = 'Account_Name,Segmento,Etapa_del_ciclo_de_vida,Interes_Principal,ZB_Books_Customer_ID,Desde_Ultimo_Pedido,Fecha_del_Ultimo_Pedido';
+    let allAccounts = [];
+    let page = 1;
+
+    while (page <= 10) {
+      const url = `https://www.zohoapis${dc}/crm/v6/Accounts?fields=${fields}&per_page=200&page=${page}`;
+      const response = await fetch(url, {
+        headers: { 'Authorization': `Zoho-oauthtoken ${accessToken}` }
+      });
+
+      if (!response.ok) break;
+
+      const data = await response.json();
+      if (!data.data || data.data.length === 0) break;
+
+      allAccounts.push(...data.data);
+      if (data.data.length < 200) break;
+      page++;
+    }
+
+    console.log(`[Aurelio] 👥 Loaded ${allAccounts.length} CRM accounts`);
+
+    // Build lookup: Books customer_id → Account data
+    const accountLookup = new Map();
+    for (const account of allAccounts) {
+      if (account.ZB_Books_Customer_ID) {
+        accountLookup.set(account.ZB_Books_Customer_ID.toString(), {
+          name: account.Account_Name,
+          segment: account.Segmento || 'Sin Segmento',
+          lifecycle: account.Etapa_del_ciclo_de_vida || 'Prospecto',
+          interest: account.Interes_Principal,
+          daysSinceOrder: account.Desde_Ultimo_Pedido
+        });
+      }
+    }
+
+    // Analyze customers by segment and lifecycle
+    const segmentStats = {};
+    const lifecycleStats = {
+      'Cliente Activo': { count: 0, revenue: 0 },
+      'En Riesgo': { count: 0, revenue: 0 },
+      'Inactivo': { count: 0, revenue: 0 },
+      'Prospecto': { count: 0, revenue: 0 },
+      'Descalificado': { count: 0, revenue: 0 },
+      'No Aplica': { count: 0, revenue: 0 }
+    };
+
+    // Initialize segment stats for known segments
+    const knownSegments = [
+      '⭐⭐⭐⭐⭐ Directo/B2C',
+      '⭐⭐⭐⭐ HORECA Premium',
+      '⭐⭐⭐ Supermercado',
+      '⭐⭐ Institucional',
+      '⭐ Mayorista/Distribuidor',
+      'Sin Segmento'
+    ];
+
+    for (const seg of knownSegments) {
+      segmentStats[seg] = {
+        uniqueCustomers: new Set(),
+        transactions: 0,
+        revenue: 0,
+        products: {}
+      };
+    }
+
+    // Process invoices and enrich with segment data
+    const customersThisWeek = new Set();
+    const newCustomers = [];
+    const repeatCustomers = [];
+
+    for (const invoice of invoices || []) {
+      const customerId = invoice.customer_id?.toString();
+      const customerName = invoice.customer_name || 'Unknown';
+      const accountData = accountLookup.get(customerId);
+
+      const segment = accountData?.segment || 'Sin Segmento';
+      const lifecycle = accountData?.lifecycle || 'Prospecto';
+
+      // Track unique customers
+      customersThisWeek.add(customerId);
+
+      // Initialize segment if not known
+      if (!segmentStats[segment]) {
+        segmentStats[segment] = {
+          uniqueCustomers: new Set(),
+          transactions: 0,
+          revenue: 0,
+          products: {}
+        };
+      }
+
+      segmentStats[segment].uniqueCustomers.add(customerId);
+      segmentStats[segment].transactions++;
+      segmentStats[segment].revenue += invoice.total || 0;
+
+      // Track lifecycle
+      if (lifecycleStats[lifecycle]) {
+        lifecycleStats[lifecycle].count++;
+        lifecycleStats[lifecycle].revenue += invoice.total || 0;
+      }
+    }
+
+    // Calculate engagement metrics
+    const freshAccounts = allAccounts.filter(a =>
+      a.Interes_Principal === 'Productos Frescos'
+    );
+
+    const activeCustomers = freshAccounts.filter(a =>
+      a.Etapa_del_ciclo_de_vida === 'Cliente Activo'
+    ).length;
+
+    const atRiskCustomers = freshAccounts.filter(a =>
+      a.Etapa_del_ciclo_de_vida === 'En Riesgo'
+    ).length;
+
+    const inactiveCustomers = freshAccounts.filter(a =>
+      a.Etapa_del_ciclo_de_vida === 'Inactivo'
+    ).length;
+
+    // Build segment summary (convert Sets to counts)
+    const segmentSummary = {};
+    for (const [seg, stats] of Object.entries(segmentStats)) {
+      if (stats.uniqueCustomers.size > 0 || stats.revenue > 0) {
+        // Extract short segment name for display
+        const shortName = seg.replace(/⭐+\s*/g, '').trim() || 'Sin Segmento';
+        segmentSummary[shortName] = {
+          uniqueCustomers: stats.uniqueCustomers.size,
+          transactions: stats.transactions,
+          revenue: Math.round(stats.revenue),
+          avgTransaction: stats.transactions > 0 ? Math.round(stats.revenue / stats.transactions) : 0
+        };
+      }
+    }
+
+    console.log(`[Aurelio] ✅ Customer analysis: ${activeCustomers} activos, ${atRiskCustomers} en riesgo, ${inactiveCustomers} inactivos`);
+
+    return {
+      totalFreshCustomers: freshAccounts.length,
+      bySegment: segmentSummary,
+      engagement: {
+        activeCustomers,
+        atRiskCustomers,
+        inactiveCustomers,
+        customersThisWeek: customersThisWeek.size
+      },
+      lifecycleStats
+    };
+
+  } catch (error) {
+    console.error('[Aurelio] ❌ Error consultando CRM:', error.message);
+    return null;
+  }
+}
+
+// =============================================================================
+// GOVERNMENT WHOLESALE PRICES - SIMA/DAMA Integration
+// =============================================================================
+
+/**
+ * Scrape government wholesale prices from SIMA and DAMA sources
+ * These prices represent wholesale market conditions that affect negotiations
+ */
+async function getGovernmentWholesalePrices() {
+  console.log('[Aurelio] 📊 Consultando precios mayoristas del gobierno...');
+
+  const results = [];
+
+  // Products we're tracking
+  const TRACKED_PRODUCTS = {
+    'tomate lisa': { unit: 'kg', aurelioName: 'Tomate Lisa' },
+    'tomate perita': { unit: 'kg', aurelioName: 'Tomate Perita' },
+    'tomate cherry': { unit: 'kg', aurelioName: 'Tomate Cherry' },
+    'locote rojo': { unit: 'kg', aurelioName: 'Locote Rojo' },
+    'locote amarillo': { unit: 'kg', aurelioName: 'Locote Amarillo' },
+    'lechuga pirati': { unit: 'docena', aurelioName: 'Lechuga Pirati' },
+    'lechuga': { unit: 'docena', aurelioName: 'Lechuga Pirati' },
+    'verdeos': { unit: 'docena', aurelioName: 'Verdeos' }
+  };
+
+  // Try SIMA (mag.gov.py)
+  const simaUrls = [
+    'https://www.mag.gov.py/precios-sima',
+    'https://www.mag.gov.py/index.php/institucion/dependencias/dc/sima'
+  ];
+
+  for (const url of simaUrls) {
+    try {
+      const response = await fetch(url, {
+        timeout: 15000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; HidroBioBot/1.0; +https://hidrobio.com.py)'
+        }
+      });
+
+      if (!response.ok) continue;
+
+      const html = await response.text();
+      const $ = cheerio.load(html);
+
+      // Look for price tables
+      $('table').each((_, table) => {
+        const rows = $(table).find('tr');
+        rows.each((_, row) => {
+          const cells = $(row).find('td, th');
+          if (cells.length < 2) return;
+
+          const productText = $(cells[0]).text().toLowerCase().trim();
+          const priceText = $(cells[cells.length - 1]).text().trim();
+
+          for (const [product, config] of Object.entries(TRACKED_PRODUCTS)) {
+            if (productText.includes(product)) {
+              const priceMatch = priceText.replace(/\./g, '').match(/(\d+)/);
+              if (priceMatch) {
+                results.push({
+                  source: 'SIMA',
+                  product: config.aurelioName,
+                  price: parseInt(priceMatch[1]),
+                  unit: config.unit,
+                  date: new Date().toISOString().split('T')[0]
+                });
+              }
+              break;
+            }
+          }
+        });
+      });
+
+      if (results.length > 0) {
+        console.log(`[Aurelio] SIMA: ${results.length} precios encontrados`);
+        break;
+      }
+    } catch (e) {
+      // Continue to next URL
+    }
+  }
+
+  // Try DAMA (datos.gov.py CKAN API)
+  try {
+    const ckanUrl = 'https://datos.gov.py/api/3/action/package_search?q=abasto+precios';
+    const searchResponse = await fetch(ckanUrl, { timeout: 10000 });
+
+    if (searchResponse.ok) {
+      const searchData = await searchResponse.json();
+      if (searchData.success && searchData.result?.results) {
+        for (const dataset of searchData.result.results.slice(0, 3)) {
+          for (const resource of dataset.resources || []) {
+            if (resource.format === 'CSV' || resource.format === 'JSON') {
+              // Could download and parse, but for now just note availability
+              console.log(`[Aurelio] DAMA dataset encontrado: ${dataset.title}`);
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // DAMA API not available
+  }
+
+  console.log(`[Aurelio] 📊 Precios mayoristas: ${results.length} encontrados`);
+
+  return results;
+}
+
+// =============================================================================
 // REASONING ENGINE (Claude-Powered Analysis)
 // =============================================================================
 
@@ -1496,6 +2061,14 @@ async function analyzeWithClaude(db, todayPrices) {
   // Get weekly sales data from Zoho Books
   console.log('[Aurelio] 📊 Consultando precios de venta de última semana...');
   const weeklySales = await getWeeklySalesPrices();
+
+  // Get customer analysis from CRM (segments and lifecycle)
+  console.log('[Aurelio] 👥 Consultando análisis de clientes...');
+  const customerAnalysis = await getCustomerAnalysis(weeklySales.invoices);
+
+  // Get government wholesale prices (SIMA/DAMA)
+  console.log('[Aurelio] 🏛️ Consultando precios mayoristas del gobierno...');
+  const wholesalePrices = await getGovernmentWholesalePrices();
 
   // Prepare market data for each product
   const productAnalyses = [];
@@ -1639,6 +2212,16 @@ FORMATO DE RESPUESTA (JSON puro, sin markdown):
     "productosMejorar": ["productos donde hay oportunidad de mejora"],
     "accionesSugeridas": ["1-3 acciones concretas para mejorar la implementación"]
   },
+  "analisisClientes": {
+    "resumen": "Evaluación del engagement de clientes y oportunidades",
+    "clientesEnRiesgo": número,
+    "segmentoMasValor": "nombre del segmento con mayor revenue o ticket promedio",
+    "accionesEngagement": ["1-2 acciones para retener clientes en riesgo o activar inactivos"]
+  },
+  "referenciaMayorista": {
+    "tendencia": "subiendo|bajando|estable|sin_datos",
+    "oportunidad": "Descripción breve de cómo aprovechar o proteger vs precios mayoristas"
+  },
   "alertasGenerales": ["alertas importantes"]
 }
 
@@ -1697,6 +2280,28 @@ CONTEXTO HIDROBIO:
 - Sin pesticidas, disponibles 365 días, trazabilidad completa
 - Objetivo: posicionamiento PREMIUM, nunca el más barato
 
+${wholesalePrices.length > 0 ? `
+🏛️ PRECIOS MAYORISTAS DEL GOBIERNO (SIMA/DAMA):
+Estos precios representan el mercado mayorista y afectan las negociaciones con supermercados:
+${wholesalePrices.map(p => `- ${p.product}: Gs. ${p.price.toLocaleString()}/${p.unit} (${p.source})`).join('\n')}
+` : ''}
+
+${customerAnalysis ? `
+👥 ANÁLISIS DE CLIENTES (datos del CRM):
+
+ENGAGEMENT DE CLIENTES (productos frescos):
+- Total clientes productos frescos: ${customerAnalysis.totalFreshCustomers}
+- Clientes Activos: ${customerAnalysis.engagement.activeCustomers} (comprando regularmente)
+- En Riesgo: ${customerAnalysis.engagement.atRiskCustomers} (sin comprar en periodo normal)
+- Inactivos: ${customerAnalysis.engagement.inactiveCustomers} (más de 2x su periodo normal sin comprar)
+- Clientes que compraron esta semana: ${customerAnalysis.engagement.customersThisWeek}
+
+VENTAS POR SEGMENTO (esta semana):
+${Object.entries(customerAnalysis.bySegment).map(([seg, data]) =>
+  `- ${seg}: ${data.uniqueCustomers} clientes, ${data.transactions} transacciones, Gs. ${data.revenue.toLocaleString()} ingresos, ticket promedio Gs. ${data.avgTransaction.toLocaleString()}`
+).join('\n')}
+` : ''}
+
 TAREA:
 1. Revisa los precios calculados y valida si son coherentes
 2. Ajusta si hay violaciones del piso absoluto o márgenes insuficientes
@@ -1706,7 +2311,15 @@ TAREA:
    - ¿Estamos vendiendo dentro de las bandas recomendadas?
    - ¿A qué segmento corresponden los precios que estamos vendiendo?
    - ¿Hay oportunidad de subir precios sin perder clientes?
-   - Si el precio promedio vendido es muy bajo vs la mediana, ¿estamos regalando margen?`;
+   - Si el precio promedio vendido es muy bajo vs la mediana, ¿estamos regalando margen?
+6. ANÁLISIS DE CLIENTES (si hay datos):
+   - ¿Hay clientes En Riesgo que necesitan atención comercial?
+   - ¿Qué segmentos están generando más valor?
+   - ¿Hay correlación entre segmento y precios pagados?
+7. REFERENCIA MAYORISTA (si hay datos SIMA/DAMA):
+   - ¿Cómo están los precios HidroBio vs mayorista?
+   - Si el mayorista sube, es oportunidad para subir precios
+   - Si el mayorista baja, presión competitiva`;
 
   try {
     console.log('[Aurelio] Iniciando análisis con Claude...');
@@ -2773,6 +3386,17 @@ async function runAurelio() {
         });
       }
     }
+
+    // Save full weekly report for dashboard
+    const supermarkets = [...new Set(todayPrices.map(p => p.supermarket))];
+    const products = [...new Set(todayPrices.map(p => p.product))];
+    db.saveWeeklyReport(
+      analysis,
+      todayPrices.length,
+      supermarkets.length,
+      products.length
+    );
+    console.log('[Aurelio] 💾 Reporte semanal guardado para dashboard');
 
     // Save alerts
     if (analysis.alertasGenerales) {

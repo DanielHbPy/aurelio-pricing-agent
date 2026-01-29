@@ -1,0 +1,19 @@
+{
+  "name": "aurelio-dashboard",
+  "version": "1.0.0",
+  "description": "Aurelio Pricing Intelligence Dashboard - HidroBio S.A.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": ["hidrobio", "aurelio", "pricing", "dashboard"],
+  "author": "HidroBio S.A.",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "ws": "^8.16.0",
+    "pdfkit": "^0.15.0"
+  }
+}

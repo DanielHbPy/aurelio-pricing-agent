@@ -1,11 +1,13 @@
 {
   "name": "aurelio-pricing-agent",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Aurelio - Elite Pricing Intelligence Agent for HidroBio S.A.",
   "type": "module",
   "main": "aurelio.mjs",
   "scripts": {
-    "start": "node aurelio.mjs --daemon",
+    "start": "node index.mjs",
+    "start:daemon": "node aurelio.mjs --daemon",
+    "start:dashboard": "node dashboard/server.js",
     "run-now": "node aurelio.mjs --now",
     "schedule": "node aurelio.mjs --schedule",
     "scrape": "node aurelio.mjs --scrape",
@@ -32,6 +34,10 @@
     "better-sqlite3": "^11.8.1",
     "cheerio": "^1.0.0",
     "node-fetch": "^3.3.2",
-    "nodemailer": "^6.10.1"
+    "nodemailer": "^6.10.1",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@railway/cli": "^4.27.4"
   }
 }

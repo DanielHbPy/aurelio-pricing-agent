@@ -3,20 +3,22 @@
 **Named after Marcus Aurelius** - embodying wisdom, strategic thinking, and disciplined analysis.
 
 Aurelio is HidroBio's autonomous pricing intelligence agent that:
-1. Monitors daily supermarket consumer prices (Stock, Superseis, Casa Rica, Salemma)
+1. Monitors daily supermarket consumer prices (Stock, Superseis, Casa Rica, Biggie, Supermas, Real)
 2. Calculates market medians for each product category
 3. Uses Claude AI to generate strategic B2B pricing recommendations
 4. Compares recommendations against actual Zoho Books sales data
 5. Outputs weekly pricing guidance for updating the Calculadora de Precios
+6. **Web Dashboard** - Secure internal dashboard for viewing analysis (Zoho OAuth + MFA)
 
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `aurelio.mjs` | Main entry point - Node.js scraper + Claude analysis (2800+ lines) |
-| `data/aurelio.db` | SQLite database with prices, analysis, alerts |
-| `AURELIO.md` | Detailed agent documentation |
-| `AURELIO-ROADMAP.md` | Future development roadmap |
+| `aurelio.mjs` | Main agent - Node.js scraper + Claude analysis (3000+ lines) |
+| `index.mjs` | Combined entry point for Railway (daemon + dashboard) |
+| `data/aurelio.db` | SQLite database with prices, analysis, alerts, weekly_reports |
+| `dashboard/` | Web dashboard server (Zoho OAuth protected) |
+| `CLAUDE.md` | This documentation |
 
 ## Running Aurelio
 
@@ -40,8 +42,14 @@ npm run daily-report     # Market snapshot with prices collected
 # Weekly analysis report
 npm run weekly-report    # Full AI analysis + recommendations
 
-# Daemon mode (Railway deployment)
-npm start                # Scheduled: daily 05:00, weekly Thursday 15:00
+# Combined mode (Railway deployment) - runs daemon + web dashboard
+npm start                # Daemon + Dashboard on port 3000
+
+# Daemon only mode
+npm run start:daemon     # Scheduled: daily 05:00, weekly Thursday 15:00
+
+# Dashboard only mode
+npm run start:dashboard  # Web dashboard on port 3000
 ```
 
 ### CLI Options
@@ -97,7 +105,10 @@ HidroBio sells B2B at prices calculated as **% of market median** (supermarket c
 | **Stock** | Active | Cheerio/Node.js | nopCommerce site |
 | **Superseis** | Active | Cheerio/Node.js | `data-product-id` attrs |
 | **Casa Rica** | Active | Cheerio/Node.js | Longer timeout |
-| **Salemma** | Active | Cheerio/Node.js | Laravel category pages |
+| **Biggie** | Active | REST API | Public API at `api.app.biggie.com.py` (added 2026-01-28) |
+| **Salemma** | ❌ Disabled | Cheerio/Node.js | Server redirect bug (www→non-www drops `/` from paths) |
+| **Supermas** | Active | Cheerio/Node.js | PHP ecommerce, clean HTML (added 2026-01-28) |
+| **Real** | Active | GraphQL API | Instaleap API at `nextgentheadless.instaleap.io` (added 2026-01-28) |
 
 ## Environment Variables
 
@@ -198,6 +209,22 @@ Prices sync to Zoho Analytics after each scraping run.
 | Precio_Gs | Number | Price in Guaranies |
 | Unidad | Text | Unit (kg, unit) |
 
+## Web Dashboard
+
+Aurelio includes a secure web dashboard at `dashboard/`:
+
+**Features:**
+- Visual pricing analysis matching email template
+- Zoho OAuth authentication (inherits organization MFA)
+- "Run Now" button to trigger immediate analysis
+- Real-time WebSocket progress updates
+
+**Access:** Only HidroBio leadership team (5 whitelisted emails)
+
+**URL:** `https://aurelio.hidrobio.com.py` (after Railway custom domain setup)
+
+See `dashboard/CLAUDE.md` for full documentation.
+
 ## Railway Deployment
 
 ```bash
@@ -206,9 +233,9 @@ railway init
 railway up
 ```
 
-The agent runs in daemon mode with:
-- Daily scraping at 05:00 PYT
-- Weekly analysis on Thursday 15:00 PYT
+The service runs both daemon and dashboard:
+- **Daemon:** Daily scraping at 05:00 PYT, weekly analysis Thursday 15:00 PYT
+- **Dashboard:** Web server on port 3000 with health check at `/api/health`
 - Hourly heartbeat logging
 
 ## Troubleshooting
@@ -230,4 +257,4 @@ The agent runs in daemon mode with:
 
 ---
 
-*Last updated: January 27, 2026*
+*Last updated: January 28, 2026*

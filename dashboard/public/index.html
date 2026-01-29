@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aurelio - Pricing Intelligence | HidroBio S.A.</title>
+  <meta name="theme-color" content="#1a5c1f">
+  <meta name="description" content="Panel de inteligencia de precios para HidroBio S.A.">
+  <link rel="icon" href="/hidrobio-logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <!-- Header -->
+  <header class="dashboard-header">
+    <div class="header-left">
+      <img src="/hidrobio-logo.svg" alt="HidroBio" class="header-logo">
+      <div class="header-title">
+        <h1>AURELIO</h1>
+        <span class="header-subtitle">Pricing Intelligence Dashboard</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="report-info">
+        <span id="report-date" class="report-date">Cargando...</span>
+        <span id="user-name" class="user-name"></span>
+      </div>
+      <button id="run-now-btn" class="btn btn-primary">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8 5v14l11-7z"/>
+        </svg>
+        Ejecutar Ahora
+      </button>
+      <button id="download-pdf-btn" class="btn btn-accent">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+        </svg>
+        PDF
+      </button>
+      <button id="send-email-btn" class="btn btn-accent">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+        </svg>
+        Email
+      </button>
+      <button id="logout-btn" class="btn btn-secondary">
+        <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
+        </svg>
+        Salir
+      </button>
+    </div>
+  </header>
+
+  <!-- Progress Modal -->
+  <div id="progress-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <svg class="modal-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/>
+        </svg>
+        <h3>Ejecutando Analisis</h3>
+      </div>
+      <div class="progress-container">
+        <div id="progress-bar" class="progress-bar"></div>
+      </div>
+      <div id="progress-log" class="progress-log"></div>
+      <button id="close-modal-btn" class="btn btn-modal hidden">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- Main Content -->
+  <main class="dashboard-main">
+    <!-- Stats Bar -->
+    <section class="stats-bar">
+      <div class="stat">
+        <div class="stat-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M11.8 10.9c-2.27-.59-3-1.2-3-2.15 0-1.09 1.01-1.85 2.7-1.85 1.78 0 2.44.85 2.5 2.1h2.21c-.07-1.72-1.12-3.3-3.21-3.81V3h-3v2.16c-1.94.42-3.5 1.68-3.5 3.61 0 2.31 1.91 3.46 4.7 4.13 2.5.6 3 1.48 3 2.41 0 .69-.49 1.79-2.7 1.79-2.06 0-2.87-.92-2.98-2.1h-2.2c.12 2.19 1.76 3.42 3.68 3.83V21h3v-2.15c1.95-.37 3.5-1.5 3.5-3.55 0-2.84-2.43-3.81-4.7-4.4z"/>
+          </svg>
+        </div>
+        <span id="stat-prices" class="stat-value">--</span>
+        <span class="stat-label">Precios Recolectados</span>
+      </div>
+      <div class="stat">
+        <div class="stat-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z"/>
+          </svg>
+        </div>
+        <span id="stat-supermarkets" class="stat-value">--</span>
+        <span class="stat-label">Supermercados</span>
+      </div>
+      <div class="stat">
+        <div class="stat-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+          </svg>
+        </div>
+        <span id="stat-products" class="stat-value">--</span>
+        <span class="stat-label">Productos Monitoreados</span>
+      </div>
+      <div class="stat">
+        <div class="stat-icon">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/>
+          </svg>
+        </div>
+        <span id="stat-next" class="stat-value">--</span>
+        <span class="stat-label">Proximo Analisis</span>
+      </div>
+    </section>
+
+    <!-- Executive Summary -->
+    <section id="executive-summary" class="section executive-summary">
+      <h2>
+        <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>
+        </svg>
+        Resumen Ejecutivo
+      </h2>
+      <p id="summary-text" class="summary-text">Cargando resumen...</p>
+    </section>
+
+    <!-- Product Cards -->
+    <section id="product-cards" class="section">
+      <h2>
+        <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/>
+        </svg>
+        Analisis por Producto
+      </h2>
+      <div id="products-container" class="products-container">
+        <div class="loading-placeholder">
+          <div class="loading-spinner"></div>
+          <p>Cargando productos...</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Strategy Implementation -->
+    <section id="strategy-section" class="section strategy-section hidden">
+      <h2>
+        <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/>
+        </svg>
+        Implementacion de Estrategia de Precios
+      </h2>
+      <div id="strategy-summary" class="strategy-summary"></div>
+      <div class="table-responsive">
+        <table id="strategy-table" class="strategy-table">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Precio Vendido</th>
+              <th>% de Mediana</th>
+              <th>Evaluacion</th>
+              <th>Cantidad</th>
+            </tr>
+          </thead>
+          <tbody id="strategy-tbody"></tbody>
+        </table>
+      </div>
+      <div id="strategy-actions" class="strategy-actions"></div>
+    </section>
+
+    <!-- Customer Analysis -->
+    <section id="customer-section" class="section customer-section hidden">
+      <h2>
+        <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
+        </svg>
+        Analisis de Clientes
+      </h2>
+      <div id="customer-engagement" class="customer-engagement">
+        <div class="engagement-stats">
+          <div class="engagement-stat active">
+            <span class="engagement-value" id="customers-active">--</span>
+            <span class="engagement-label">Clientes Activos</span>
+          </div>
+          <div class="engagement-stat risk">
+            <span class="engagement-value" id="customers-risk">--</span>
+            <span class="engagement-label">En Riesgo</span>
+          </div>
+          <div class="engagement-stat inactive">
+            <span class="engagement-value" id="customers-inactive">--</span>
+            <span class="engagement-label">Inactivos</span>
+          </div>
+          <div class="engagement-stat week">
+            <span class="engagement-value" id="customers-week">--</span>
+            <span class="engagement-label">Compraron esta Semana</span>
+          </div>
+        </div>
+      </div>
+      <div id="customer-summary" class="customer-summary"></div>
+      <div id="customer-actions" class="customer-actions"></div>
+    </section>
+
+    <!-- Alerts -->
+    <section id="alerts-section" class="section alerts-section hidden">
+      <h2>
+        <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/>
+        </svg>
+        Alertas de Mercado
+      </h2>
+      <div id="alerts-container" class="alerts-container"></div>
+    </section>
+
+    <!-- Weekly Recommendation -->
+    <section id="recommendation-section" class="section recommendation-section hidden">
+      <h2>
+        <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M9 21c0 .5.4 1 1 1h4c.6 0 1-.5 1-1v-1H9v1zm3-19C8.1 2 5 5.1 5 9c0 2.4 1.2 4.5 3 5.7V17c0 .5.4 1 1 1h6c.6 0 1-.5 1-1v-2.3c1.8-1.3 3-3.4 3-5.7 0-3.9-3.1-7-7-7z"/>
+        </svg>
+        Recomendacion Semanal
+      </h2>
+      <p id="recommendation-text" class="recommendation-text"></p>
+    </section>
+
+    <!-- Raw Prices -->
+    <section id="raw-prices-section" class="section raw-prices-section">
+      <h2>
+        <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z"/>
+        </svg>
+        Precios por Supermercado
+      </h2>
+      <div id="raw-prices-container" class="raw-prices-container">
+        <!-- Collapsible supermarket sections will be inserted here -->
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer class="dashboard-footer">
+    <div class="footer-content">
+      <img src="/hidrobio-logo.svg" alt="HidroBio" class="footer-logo">
+      <div class="footer-text">
+        <p class="footer-brand">AURELIO - Pricing Intelligence</p>
+        <p class="footer-company">HidroBio S.A. | Paraguay</p>
+      </div>
+      <p class="footer-timestamp">Actualizado: <span id="footer-timestamp"></span></p>
+    </div>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
