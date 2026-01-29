@@ -2340,21 +2340,57 @@ TAREA:
       content = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
     }
 
+    // Clean up common JSON issues from LLM responses
+    // Remove trailing commas before closing brackets
+    content = content.replace(/,(\s*[\]}])/g, '$1');
+    // Remove any leading/trailing whitespace
+    content = content.trim();
+
     // Parse JSON response
+    let analysis;
     try {
-      const analysis = JSON.parse(content);
+      analysis = JSON.parse(content);
       console.log('[Aurelio] Análisis completado exitosamente');
-      return analysis;
     } catch (parseError) {
       console.error('[Aurelio] Error parsing Claude response:', parseError.message);
-      console.log('[Aurelio] Raw response:', content.substring(0, 500));
-      return {
-        resumenEjecutivo: 'Error al procesar el análisis',
-        productos: [],
-        alertasGenerales: ['Error de parsing en la respuesta de Claude'],
-        accionesRecomendadas: []
-      };
+      console.log('[Aurelio] Raw response (first 1000 chars):', content.substring(0, 1000));
+      console.log('[Aurelio] Raw response (last 500 chars):', content.substring(content.length - 500));
+
+      // Try to extract partial JSON if possible
+      try {
+        // Find the last valid JSON object
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          let cleaned = jsonMatch[0];
+          cleaned = cleaned.replace(/,(\s*[\]}])/g, '$1');
+          analysis = JSON.parse(cleaned);
+          console.log('[Aurelio] Recuperado análisis parcial');
+        }
+      } catch (e) {
+        console.error('[Aurelio] No se pudo recuperar análisis parcial');
+      }
+
+      if (!analysis) {
+        analysis = {
+          resumenEjecutivo: 'Error al procesar el análisis. Ejecuta de nuevo.',
+          productos: [],
+          alertasGenerales: ['Error de parsing en la respuesta de Claude - intenta ejecutar de nuevo'],
+          accionesRecomendadas: []
+        };
+      }
     }
+
+    // Always inject raw CRM data for dashboard (independent of Claude's response)
+    if (customerAnalysis && !analysis.datosCrmDirectos) {
+      analysis.datosCrmDirectos = {
+        totalFreshCustomers: customerAnalysis.totalFreshCustomers,
+        engagement: customerAnalysis.engagement,
+        bySegment: customerAnalysis.bySegment
+      };
+      console.log('[Aurelio] ✅ Datos CRM inyectados en análisis');
+    }
+
+    return analysis;
   } catch (error) {
     console.error('[Aurelio] Error calling Claude:', error.message);
     return {

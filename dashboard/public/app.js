@@ -115,6 +115,9 @@ function renderDashboard() {
   elements.statProducts.textContent = status?.productsCount || '--';
   elements.statNext.textContent = status?.nextScheduled ? formatShortDate(status.nextScheduled) : '--';
 
+  // Clear alerts container before rendering (prevent duplicates)
+  elements.alertsContainer.innerHTML = '';
+
   // Get analysis data (handle both formats)
   const analysisData = analysis?.analysis || analysis;
 
@@ -129,7 +132,7 @@ function renderDashboard() {
     renderPricesOnly(prices);
   }
 
-  // Render alerts
+  // Render alerts from DB (only if not already rendered by analysis)
   renderAlerts(alerts);
 
   // Render raw prices
@@ -152,9 +155,12 @@ function renderFullAnalysis(analysis, prices) {
     renderStrategySection(analysis.analisisImplementacion, analysis.productos);
   }
 
-  // Customer Analysis
+  // Customer Analysis - use Claude's analysis or fallback to raw CRM data
   if (analysis.analisisClientes) {
     renderCustomerSection(analysis.analisisClientes);
+  } else if (analysis.datosCrmDirectos) {
+    // Fallback: render raw CRM data when Claude didn't generate analisisClientes
+    renderCustomerSectionFromCrm(analysis.datosCrmDirectos);
   }
 
   // Weekly Recommendation
@@ -163,14 +169,19 @@ function renderFullAnalysis(analysis, prices) {
     elements.recommendationText.textContent = analysis.recomendacionSemanal;
   }
 
-  // General Alerts
+  // General Alerts (from AI analysis)
   if (analysis.alertasGenerales && analysis.alertasGenerales.length > 0) {
-    const existingAlerts = elements.alertsContainer.innerHTML;
-    const generalAlertsHtml = analysis.alertasGenerales.map(a =>
-      `<div class="alert-item">⚠️ ${a}</div>`
-    ).join('');
-    elements.alertsContainer.innerHTML = generalAlertsHtml + existingAlerts;
-    elements.alertsSection.classList.remove('hidden');
+    // Filter out parsing error alerts if there's actual content
+    const filteredAlerts = analysis.alertasGenerales.filter(a =>
+      !a.includes('Error de parsing') || !analysis.resumenEjecutivo || analysis.resumenEjecutivo === 'Error al procesar el análisis'
+    );
+    if (filteredAlerts.length > 0) {
+      const generalAlertsHtml = filteredAlerts.map(a =>
+        `<div class="alert-item">⚠️ ${a}</div>`
+      ).join('');
+      elements.alertsContainer.innerHTML = generalAlertsHtml;
+      elements.alertsSection.classList.remove('hidden');
+    }
   }
 }
 
@@ -407,6 +418,62 @@ function renderCustomerSection(customerData) {
   }
 }
 
+// Fallback: render raw CRM data when Claude's analisisClientes is not available
+function renderCustomerSectionFromCrm(crmData) {
+  if (!crmData || !elements.customerSection) return;
+
+  elements.customerSection.classList.remove('hidden');
+
+  // Update engagement stats from raw CRM data
+  if (elements.customersActive) {
+    elements.customersActive.textContent = crmData.engagement?.activeCustomers ?? '--';
+  }
+  if (elements.customersRisk) {
+    elements.customersRisk.textContent = crmData.engagement?.atRiskCustomers ?? '--';
+  }
+  if (elements.customersInactive) {
+    elements.customersInactive.textContent = crmData.engagement?.inactiveCustomers ?? '--';
+  }
+  if (elements.customersWeek) {
+    elements.customersWeek.textContent = crmData.engagement?.customersThisWeek ?? '--';
+  }
+
+  // Generate summary from raw data
+  if (elements.customerSummary) {
+    const total = crmData.totalFreshCustomers || 0;
+    const atRisk = crmData.engagement?.atRiskCustomers || 0;
+    const active = crmData.engagement?.activeCustomers || 0;
+
+    let summaryHtml = `<p>Base de clientes de productos frescos: <strong>${total}</strong> cuentas</p>`;
+
+    // Find top segment by revenue
+    if (crmData.bySegment) {
+      const segments = Object.entries(crmData.bySegment)
+        .filter(([_, data]) => data.revenue > 0)
+        .sort((a, b) => b[1].revenue - a[1].revenue);
+
+      if (segments.length > 0) {
+        const [topSeg, topData] = segments[0];
+        summaryHtml += `<p><strong>Segmento de mayor valor:</strong> ${topSeg} (Gs. ${formatNumber(topData.revenue)})</p>`;
+      }
+    }
+
+    if (atRisk > 0) {
+      summaryHtml += `<p style="color: #ff6b6b;">⚠️ ${atRisk} clientes en riesgo requieren atención comercial</p>`;
+    }
+
+    elements.customerSummary.innerHTML = summaryHtml;
+  }
+
+  // No AI-generated actions available, show placeholder
+  if (elements.customerActions) {
+    elements.customerActions.innerHTML = `
+      <h4>🎯 Acciones de Engagement</h4>
+      <p style="color: #666; font-style: italic;">Ejecuta un análisis completo para obtener recomendaciones de AI</p>
+    `;
+  }
+}
+
 function renderAlerts(alerts) {
   if (!alerts || alerts.length === 0) return;
 
@@ -418,6 +485,7 @@ function renderAlerts(alerts) {
     </div>
   `).join('');
 
+  // Append to existing alerts (from AI analysis) instead of replacing
   elements.alertsContainer.innerHTML += alertsHtml;
 }
 
