@@ -121,9 +121,11 @@ function renderDashboard() {
   // Get analysis data (handle both formats)
   const analysisData = analysis?.analysis || analysis;
 
+  let hasAiAlerts = false;
   if (typeof analysisData === 'object' && analysisData.resumenEjecutivo) {
     // Full analysis JSON
     renderFullAnalysis(analysisData, prices);
+    hasAiAlerts = analysisData.alertasGenerales && analysisData.alertasGenerales.length > 0;
   } else if (Array.isArray(analysisData)) {
     // Array of analysis rows from DB
     renderBasicAnalysis(analysisData, prices);
@@ -132,8 +134,11 @@ function renderDashboard() {
     renderPricesOnly(prices);
   }
 
-  // Render alerts from DB (only if not already rendered by analysis)
-  renderAlerts(alerts);
+  // Render alerts from DB only if AI analysis didn't generate alerts
+  // (AI alerts are already saved to DB, so showing both would duplicate)
+  if (!hasAiAlerts) {
+    renderAlerts(alerts);
+  }
 
   // Render raw prices
   renderRawPrices(prices);
