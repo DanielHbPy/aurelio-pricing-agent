@@ -187,12 +187,12 @@ const CONFIG = {
     },
     {
       name: 'Salemma',
-      enabled: false,  // Disabled 2026-01-28 - server has broken www→non-www redirect (drops / before path)
+      enabled: true,  // Re-enabled 2026-01-30 - redirect bug appears fixed
       baseUrl: 'https://www.salemmaonline.com.py',
       searchUrl: 'https://www.salemmaonline.com.py/buscar?criterio={query}',
       categoryUrl: 'https://www.salemmaonline.com.py/frutas-y-verduras/verduras',
       scraper: 'salemma',
-      notes: 'DISABLED: Apache redirect bug creates invalid URLs (salemmaonline.com.pyfrutas... missing /)'
+      notes: 'Laravel-based custom platform - h6.pprice for price, a.apsubtitle for product name'
     },
     {
       name: 'Supermas',
@@ -256,6 +256,15 @@ const CONFIG = {
       searchUrl: 'https://grutteronline.casagrutter.com.py/?s={query}&post_type=product',
       scraper: 'casagrutter',
       notes: 'WooCommerce site - clean HTML structure with fresh produce'
+    },
+    // === TIER 3 SUPERMARKETS (Added 2026-01-30) ===
+    {
+      name: 'Los Jardines',
+      enabled: true,
+      baseUrl: 'https://losjardinesonline.com.py',
+      categoryUrl: 'https://losjardinesonline.com.py/catalogo/verduras-c57',
+      scraper: 'mascreativo',
+      notes: 'MASCREATIVO platform - verduras-c57 has tomate, locote, lechuga'
     }
   ],
 
@@ -1282,8 +1291,15 @@ const SCRAPERS = {
     const results = [];
 
     try {
-      // Use search URL with query parameter
-      const url = config.searchUrl.replace('{query}', encodeURIComponent(query));
+      // Use search URL with query parameter, or fallback to category URL
+      let url;
+      if (config.searchUrl) {
+        url = config.searchUrl.replace('{query}', encodeURIComponent(query));
+      } else if (config.categoryUrl) {
+        url = config.categoryUrl;
+      } else {
+        throw new Error('No searchUrl or categoryUrl configured');
+      }
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 45000);
@@ -1341,11 +1357,29 @@ const SCRAPERS = {
 
       // Method 2: Try WooCommerce-style selectors if Method 1 didn't find products
       if (results.length === 0) {
-        $('.product, .product-item, li.product').each((_, el) => {
+        $('.product, .product-item, li.product, div.product').each((_, el) => {
           const $el = $(el);
 
+          // Try multiple sources for product name
           let name = $el.find('.woocommerce-loop-product__title, .product-title, h2, h3').first().text().trim();
-          let priceText = $el.find('.price .amount, .woocommerce-Price-amount').first().text().trim();
+          // Fallback: get from img alt attribute (used by Los Jardines)
+          if (!name) {
+            name = $el.find('img.wp-post-image, img[alt]').attr('alt') || '';
+          }
+          // Fallback: get from link title
+          if (!name) {
+            name = $el.find('a.ecommercepro-LoopProduct-link, a[title]').attr('title') || '';
+          }
+
+          // Get price - look for span.amount with actual price content
+          let priceText = '';
+          $el.find('.price .amount, .woocommerce-Price-amount, span.amount').each((_, priceEl) => {
+            const txt = $(priceEl).text().trim();
+            // Skip empty amounts or discount percentages
+            if (txt && txt.includes('₲') && !priceText) {
+              priceText = txt;
+            }
+          });
           if (!priceText) priceText = $el.find('.price').first().text().trim();
 
           const price = extractPrice(priceText);
