@@ -15,10 +15,19 @@ Aurelio is HidroBio's autonomous pricing intelligence agent that:
 | File | Description |
 |------|-------------|
 | `aurelio.mjs` | Main agent - Node.js scraper + Claude analysis (3000+ lines) |
-| `index.mjs` | Combined entry point for Railway (daemon + dashboard) |
+| `index.mjs` | **Combined entry point for Railway** - spawns daemon + dashboard |
 | `data/aurelio.db` | SQLite database with prices, analysis, alerts, weekly_reports |
 | `dashboard/` | Web dashboard server (Zoho OAuth protected) |
+| `dashboard/server.mjs` | Express server with WebSocket for real-time updates |
+| `dashboard/public/` | Frontend (index.html, styles.css, app.js) |
+| `scrapers/government-prices.mjs` | SIMA/DAMA wholesale price scraper |
 | `CLAUDE.md` | This documentation |
+
+### Entry Point (index.mjs)
+Railway runs `npm start` → `node index.mjs` which:
+1. Spawns `aurelio.mjs --daemon` (scheduled scraping + analysis)
+2. Spawns `dashboard/server.mjs` (web server on port 3000)
+3. Forwards stdout/stderr from both processes
 
 ## Running Aurelio
 
@@ -106,9 +115,15 @@ HidroBio sells B2B at prices calculated as **% of market median** (supermarket c
 | **Superseis** | Active | Cheerio/Node.js | `data-product-id` attrs |
 | **Casa Rica** | Active | Cheerio/Node.js | Longer timeout |
 | **Biggie** | Active | REST API | Public API at `api.app.biggie.com.py` (added 2026-01-28) |
-| **Salemma** | ❌ Disabled | Cheerio/Node.js | Server redirect bug (www→non-www drops `/` from paths) |
 | **Supermas** | Active | Cheerio/Node.js | PHP ecommerce, clean HTML (added 2026-01-28) |
 | **Real** | Active | GraphQL API | Instaleap API at `nextgentheadless.instaleap.io` (added 2026-01-28) |
+| **Areté** | Active | Cheerio/Node.js | MASCREATIVO ECOMMERCE PRO platform (added 2026-01-29) |
+| **San Cayetano** | Active | Cheerio/Node.js | MASCREATIVO platform, same as Areté (added 2026-01-29) |
+| **Casa Grütter** | Active | Cheerio/Node.js | WooCommerce site (added 2026-01-29) |
+| **Salemma** | ❌ Disabled | Cheerio/Node.js | Server redirect bug (www→non-www drops `/` from paths) |
+| **Pryca** | ❌ Disabled | - | Pegasus Ecommerce - products loaded via AJAX, needs Playwright |
+| **La Bomba** | ❌ Disabled | - | Pegasus Ecommerce - same as Pryca |
+| **Fortis** | ❌ Disabled | - | Rails + Turbo/Hotwire, needs Playwright |
 
 ## Environment Variables
 
@@ -227,16 +242,80 @@ See `dashboard/CLAUDE.md` for full documentation.
 
 ## Railway Deployment
 
+### Project Details
+- **Project:** `aurelio-pricing` (NOT `aurelio-pricing-agent`)
+- **Production URL:** `https://aurelio-pricing-production.up.railway.app`
+- **GitHub Repo:** `DanielHbPy/aurelio-pricing-agent`
+- **Auto-deploy:** Enabled (pushes to main trigger deploy)
+
+### Volume Mount
+```
+/app/data/aurelio.db → Railway Volume
+```
+SQLite database persists across deployments via Railway volume.
+
+### Login Commands
 ```bash
-railway login
-railway init
-railway up
+cd agents/aurelio
+
+# IMPORTANT: Use --browserless flag (no browser popup)
+npx railway login --browserless
+# → Enter code at railway.app/cli-verify
+
+# Link to existing project
+npx railway link
+
+# Deploy
+npx railway up
+
+# View logs
+npx railway logs
+```
+
+### Deployment Process
+```bash
+# After code changes:
+git add -A && git commit -m "message" && git push
+
+# Railway auto-deploys from GitHub
+# Or manual deploy:
+npx railway up
 ```
 
 The service runs both daemon and dashboard:
 - **Daemon:** Daily scraping at 05:00 PYT, weekly analysis Thursday 15:00 PYT
 - **Dashboard:** Web server on port 3000 with health check at `/api/health`
 - Hourly heartbeat logging
+
+## Aurelio v2.0 Features (January 2026)
+
+### New Capabilities
+1. **Customer Lifecycle Analysis** - Integrates CRM data to show customer engagement
+   - Active customers (purchased last 30 days)
+   - At-risk customers (31-60 days)
+   - Inactive customers (61-90 days)
+   - Purchased this week count
+
+2. **Government Wholesale Prices** - SIMA/DAMA integration
+   - Scrapes Paraguay's official wholesale market prices
+   - Used as additional reference for pricing decisions
+   - File: `scrapers/government-prices.mjs`
+
+3. **Enhanced Dashboard**
+   - Customer analysis section with engagement stats
+   - PDF export button (client-side)
+   - Email-to-self button
+   - Real-time WebSocket progress during analysis
+
+### Dashboard Sections
+1. **Stats Bar** - Prices collected, supermarkets, products, next analysis time
+2. **Resumen Ejecutivo** - AI-generated market summary
+3. **Análisis por Producto** - Product cards with:
+   - Market median, trend, floor price
+   - B2B pricing bands by segment
+   - HidroBio sales data (last week)
+   - AI evaluation and insights
+4. **Customer Analysis** - Engagement metrics from CRM
 
 ## Troubleshooting
 
@@ -255,6 +334,20 @@ The service runs both daemon and dashboard:
 2. Check for rate limiting
 3. Ensure prices exist in database
 
+### Railway build fails
+1. Ensure `index.mjs` is committed (combined entry point)
+2. Check all dependencies in `package.json`
+3. Verify Railway volume mount for `/app/data`
+
+### Dashboard shows "Error al procesar"
+1. Click "Ejecutar Ahora" to run fresh analysis
+2. Check Railway logs: `npx railway logs`
+3. Verify database has prices: run scrape first if empty
+
+### Common URL Mistake
+- **Correct:** `aurelio-pricing-production.up.railway.app`
+- **Wrong:** `aurelio-pricing-agent-production.up.railway.app` (extra "agent")
+
 ---
 
-*Last updated: January 28, 2026*
+*Last updated: January 29, 2026 (added Areté, San Cayetano, Casa Grütter scrapers)*

@@ -211,6 +211,51 @@ const CONFIG = {
       storeReference: '2',
       scraper: 'real',
       notes: 'Instaleap headless commerce - GraphQL API'
+    },
+    // === TIER 1 SUPERMARKETS (Added 2026-01-29) ===
+    {
+      name: 'Areté',
+      enabled: true,
+      baseUrl: 'https://arete.com.py',
+      searchUrl: 'https://arete.com.py/productos?q={query}',
+      categoryUrl: 'https://arete.com.py/catalogo/frutas-y-verduras-c367',
+      scraper: 'mascreativo',
+      notes: 'MASCREATIVO ECOMMERCE PRO platform - clean HTML structure'
+    },
+    {
+      name: 'San Cayetano',
+      enabled: true,
+      baseUrl: 'https://sancayetano.com.py',
+      searchUrl: 'https://sancayetano.com.py/catalogo?q={query}',
+      categoryUrl: 'https://sancayetano.com.py/catalogo/frutas-y-verduras',
+      scraper: 'mascreativo',
+      notes: 'MASCREATIVO platform - same as Areté'
+    },
+    {
+      name: 'Pryca',
+      enabled: false,  // Disabled - requires JavaScript execution (products loaded via AJAX)
+      baseUrl: 'https://www.pryca.com.py',
+      // Category ID 12 = FRUTAS Y VERDURAS
+      categoryUrl: 'https://www.pryca.com.py/index.php?class=ViewProductList&method=onSearch&from_nivel1=true&nivel1_id=12',
+      scraper: 'pegasus',
+      notes: 'Pegasus Ecommerce - needs Playwright/Puppeteer (products loaded via AJAX)'
+    },
+    {
+      name: 'La Bomba',
+      enabled: false,  // Disabled initially - category may have different ID or no products
+      baseUrl: 'https://www.supermercadolabomba.com',
+      categoryUrl: 'https://www.supermercadolabomba.com/index.php?class=ViewProductList&method=onSearch&from_nivel1=true&nivel1_id=12',
+      scraper: 'pegasus',
+      notes: 'Pegasus Ecommerce - same as Pryca (verify category ID)'
+    },
+    // === TIER 2 SUPERMARKETS (Added 2026-01-29) ===
+    {
+      name: 'Casa Grütter',
+      enabled: true,
+      baseUrl: 'https://grutteronline.casagrutter.com.py',
+      searchUrl: 'https://grutteronline.casagrutter.com.py/?s={query}&post_type=product',
+      scraper: 'casagrutter',
+      notes: 'WooCommerce site - clean HTML structure with fresh produce'
     }
   ],
 
@@ -1217,6 +1262,396 @@ const SCRAPERS = {
     } catch (error) {
       if (error.name === 'AbortError') {
         console.error(`[Aurelio] Real request timed out`);
+      } else {
+        console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
+      }
+    }
+
+    return results;
+  },
+
+  /**
+   * MASCREATIVO ECOMMERCE PRO platform scraper (Areté, San Cayetano)
+   * Added 2026-01-29
+   * Structure: Products in tabpanel with links containing:
+   *   - heading for product name (e.g., "TOMATE CHERRY EN BANDEJA XKG.")
+   *   - generic with "₲." for price (e.g., "₲. 29.450")
+   *   - generic with "%" for discount badge (e.g., "30%")
+   */
+  async mascreativo(config, query) {
+    const results = [];
+
+    try {
+      // Use search URL with query parameter
+      const url = config.searchUrl.replace('{query}', encodeURIComponent(query));
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'es-PY,es;q=0.9,en;q=0.8'
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      const html = await response.text();
+      const $ = cheerio.load(html);
+
+      // MASCREATIVO uses product cards with specific structure
+      // Product cards are typically in article elements or div with product classes
+      // Based on accessibility tree: link > image + generic (discount) + generic (price) + heading (name)
+
+      // Method 1: Find products by looking for price patterns with ₲
+      $('a[href*="-p"]').each((_, el) => {
+        const $link = $(el);
+        const href = $link.attr('href') || '';
+
+        // Skip non-product links
+        if (!href.match(/-p\d+$/)) return;
+
+        // Get product name from heading or strong
+        let name = $link.find('h1, h2, h3, h4, h5, h6').first().text().trim();
+        if (!name) {
+          name = $link.find('.product-title, .title').first().text().trim();
+        }
+
+        // Get price - look for ₲ pattern
+        const priceText = $link.text();
+        const priceMatch = priceText.match(/₲\.?\s*([\d.,]+)/);
+        const price = priceMatch ? extractPrice(priceMatch[0]) : 0;
+
+        if (name && price && isFreshProduce(name)) {
+          // Avoid duplicates
+          if (!results.some(r => r.name === name)) {
+            const normalized = normalizePricePerKg(name, price);
+            results.push({
+              supermarket: config.name,
+              name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+              price: normalized.price,
+              unit: detectUnit(name)
+            });
+          }
+        }
+      });
+
+      // Method 2: Try WooCommerce-style selectors if Method 1 didn't find products
+      if (results.length === 0) {
+        $('.product, .product-item, li.product').each((_, el) => {
+          const $el = $(el);
+
+          let name = $el.find('.woocommerce-loop-product__title, .product-title, h2, h3').first().text().trim();
+          let priceText = $el.find('.price .amount, .woocommerce-Price-amount').first().text().trim();
+          if (!priceText) priceText = $el.find('.price').first().text().trim();
+
+          const price = extractPrice(priceText);
+
+          if (name && price && isFreshProduce(name)) {
+            if (!results.some(r => r.name === name)) {
+              const normalized = normalizePricePerKg(name, price);
+              results.push({
+                supermarket: config.name,
+                name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+                price: normalized.price,
+                unit: detectUnit(name)
+              });
+            }
+          }
+        });
+      }
+
+      // Method 3: Look for ecommercepro-specific classes
+      if (results.length === 0) {
+        $('[class*="ecommercepro"], [class*="product"]').each((_, el) => {
+          const $el = $(el);
+          const text = $el.text();
+
+          // Must have a price indicator
+          if (!text.includes('₲')) return;
+
+          // Find name in headings
+          let name = $el.find('h1, h2, h3, h4, h5, h6').first().text().trim();
+
+          // Extract price
+          const priceMatch = text.match(/₲\.?\s*([\d.,]+)/);
+          const price = priceMatch ? extractPrice(priceMatch[0]) : 0;
+
+          if (name && price && isFreshProduce(name)) {
+            if (!results.some(r => r.name === name)) {
+              const normalized = normalizePricePerKg(name, price);
+              results.push({
+                supermarket: config.name,
+                name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+                price: normalized.price,
+                unit: detectUnit(name)
+              });
+            }
+          }
+        });
+      }
+
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.error(`[Aurelio] ${config.name} request timed out`);
+      } else {
+        console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
+      }
+    }
+
+    return results;
+  },
+
+  /**
+   * Pegasus Ecommerce scraper (Pryca, La Bomba)
+   * Added 2026-01-29
+   * PHP-based platform using Adianti Framework
+   * Structure: Product cards with:
+   *   - heading for product name (e.g., "TOMATE SANTA CRUZ X KG*")
+   *   - "Ahora: Gs. XX.XXX" for current price
+   *   - "Antes: Gs. XX.XXX" for original price (if on sale)
+   *   - "OFERTA" badge for discounted items
+   */
+  async pegasus(config, query) {
+    const results = [];
+
+    try {
+      // Use category URL for frutas y verduras
+      const url = config.categoryUrl;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'es-PY,es;q=0.9,en;q=0.8'
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      const html = await response.text();
+      const $ = cheerio.load(html);
+
+      const queryLower = query.toLowerCase();
+
+      // Pegasus uses card-based layout
+      // Look for product containers with price information
+      // Pattern from screenshot: "TOMATE SANTA CRUZ X KG*" + "Ahora: Gs. 11.830 x Kg."
+
+      // Method 1: Find by "Ahora:" price pattern
+      $('*').filter((_, el) => {
+        const text = $(el).text();
+        return text.includes('Ahora:') && text.includes('Gs.');
+      }).each((_, el) => {
+        const $container = $(el).closest('.card, .product-card, .col-md-3, .col-lg-3, .col-6, [class*="product"]');
+        if ($container.length === 0) return;
+
+        // Get product name from heading
+        let name = $container.find('h1, h2, h3, h4, h5, h6').first().text().trim();
+        if (!name) {
+          name = $container.find('.product-name, .title, strong').first().text().trim();
+        }
+
+        // Get current price from "Ahora: Gs. XX.XXX"
+        const containerText = $container.text();
+        const ahoraMatch = containerText.match(/Ahora:\s*Gs\.?\s*([\d.,]+)/i);
+        const price = ahoraMatch ? extractPrice(ahoraMatch[1]) : 0;
+
+        if (name && price && isFreshProduce(name)) {
+          // Check if matches query
+          const nameLower = name.toLowerCase();
+          const queryFirstWord = queryLower.split(' ')[0];
+
+          if (nameLower.includes(queryFirstWord)) {
+            if (!results.some(r => r.name === name)) {
+              const normalized = normalizePricePerKg(name, price);
+              results.push({
+                supermarket: config.name,
+                name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+                price: normalized.price,
+                unit: detectUnit(name)
+              });
+            }
+          }
+        }
+      });
+
+      // Method 2: Try common product card selectors
+      if (results.length === 0) {
+        $('.product-card, .card, [class*="producto"]').each((_, el) => {
+          const $el = $(el);
+          const text = $el.text();
+
+          // Must have price indicator
+          if (!text.includes('Gs.') && !text.includes('Gs ')) return;
+
+          let name = $el.find('h1, h2, h3, h4, h5, h6, .product-name, .title').first().text().trim();
+
+          // Extract price - prefer "Ahora" price, fallback to first Gs. match
+          let priceMatch = text.match(/Ahora:\s*Gs\.?\s*([\d.,]+)/i);
+          if (!priceMatch) {
+            priceMatch = text.match(/Gs\.?\s*([\d.,]+)/);
+          }
+          const price = priceMatch ? extractPrice(priceMatch[1]) : 0;
+
+          if (name && price && isFreshProduce(name)) {
+            const nameLower = name.toLowerCase();
+            const queryFirstWord = queryLower.split(' ')[0];
+
+            if (nameLower.includes(queryFirstWord)) {
+              if (!results.some(r => r.name === name)) {
+                const normalized = normalizePricePerKg(name, price);
+                results.push({
+                  supermarket: config.name,
+                  name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+                  price: normalized.price,
+                  unit: detectUnit(name)
+                });
+              }
+            }
+          }
+        });
+      }
+
+      // Method 3: Parse all headings and look for price siblings
+      if (results.length === 0) {
+        $('h5, h6').each((_, el) => {
+          const $heading = $(el);
+          const name = $heading.text().trim();
+
+          if (!name || !isFreshProduce(name)) return;
+
+          // Look for price in parent container
+          const $parent = $heading.parent().parent();
+          const parentText = $parent.text();
+
+          const priceMatch = parentText.match(/Gs\.?\s*([\d.,]+)/);
+          const price = priceMatch ? extractPrice(priceMatch[1]) : 0;
+
+          if (price > 0) {
+            const nameLower = name.toLowerCase();
+            const queryFirstWord = queryLower.split(' ')[0];
+
+            if (nameLower.includes(queryFirstWord)) {
+              if (!results.some(r => r.name === name)) {
+                const normalized = normalizePricePerKg(name, price);
+                results.push({
+                  supermarket: config.name,
+                  name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+                  price: normalized.price,
+                  unit: detectUnit(name)
+                });
+              }
+            }
+          }
+        });
+      }
+
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.error(`[Aurelio] ${config.name} request timed out`);
+      } else {
+        console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
+      }
+    }
+
+    return results;
+  },
+
+  /**
+   * Casa Grütter scraper (WooCommerce site)
+   * Added 2026-01-29 - Tier 2 supermarket
+   * Structure: Standard WooCommerce with:
+   *   - h2.woocommerce-loop-product__title for product name
+   *   - span.woocommerce-Price-amount for price (₲X.XXX format)
+   *   - Has bulk discount prices (3 o más)
+   */
+  async casagrutter(config, query) {
+    const results = [];
+
+    try {
+      // Use search URL with query parameter
+      const url = config.searchUrl.replace('{query}', encodeURIComponent(query));
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'es-PY,es;q=0.9,en;q=0.8'
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      const html = await response.text();
+      const $ = cheerio.load(html);
+
+      // WooCommerce standard structure
+      // Products are in li.product or div.product containers
+      $('li.product, div.product').each((_, el) => {
+        const $el = $(el);
+
+        // Get product name from h2.woocommerce-loop-product__title
+        const name = $el.find('h2.woocommerce-loop-product__title, .woocommerce-loop-product__title').first().text().trim();
+
+        // Get price from span.woocommerce-Price-amount (take first one - regular price)
+        // Casa Grütter uses ₲ (&#8370;) as currency symbol
+        let priceText = $el.find('span.woocommerce-Price-amount').first().text().trim();
+        // Remove currency symbol and parse
+        const price = extractPrice(priceText);
+
+        if (name && price && isFreshProduce(name)) {
+          // Avoid duplicates
+          if (!results.some(r => r.name === name)) {
+            const normalized = normalizePricePerKg(name, price);
+            results.push({
+              supermarket: config.name,
+              name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+              price: normalized.price,
+              unit: detectUnit(name)
+            });
+          }
+        }
+      });
+
+      // Alternative: look for products by price class directly
+      if (results.length === 0) {
+        $('.price').each((_, el) => {
+          const $price = $(el);
+          const $container = $price.closest('.product, .product-item, li');
+
+          const name = $container.find('h2, h3, .product-title').first().text().trim();
+          const priceText = $price.find('.woocommerce-Price-amount').first().text().trim();
+          const price = extractPrice(priceText);
+
+          if (name && price && isFreshProduce(name)) {
+            if (!results.some(r => r.name === name)) {
+              const normalized = normalizePricePerKg(name, price);
+              results.push({
+                supermarket: config.name,
+                name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+                price: normalized.price,
+                unit: detectUnit(name)
+              });
+            }
+          }
+        });
+      }
+
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.error(`[Aurelio] ${config.name} request timed out`);
       } else {
         console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
       }
