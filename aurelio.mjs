@@ -265,6 +265,15 @@ const CONFIG = {
       categoryUrl: 'https://losjardinesonline.com.py/catalogo/verduras-c57',
       scraper: 'mascreativo',
       notes: 'MASCREATIVO platform - verduras-c57 has tomate, locote, lechuga'
+    },
+    {
+      name: 'Gran Via',
+      enabled: true,
+      baseUrl: 'https://granviaonline.com.py',
+      apiUrl: 'https://granviaonline.com.py/api/v1/articulo',
+      categoryId: 4,  // Frutas & Verduras
+      scraper: 'granvia',
+      notes: 'VitalSoftware React SPA with REST API - cod_familia=4 for produce'
     }
   ],
 
@@ -1686,6 +1695,72 @@ const SCRAPERS = {
     } catch (error) {
       if (error.name === 'AbortError') {
         console.error(`[Aurelio] ${config.name} request timed out`);
+      } else {
+        console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
+      }
+    }
+
+    return results;
+  },
+
+  /**
+   * Gran Via Online scraper (VitalSoftware)
+   * Added 2026-01-30
+   * React SPA but with public REST API!
+   * API: /api/v1/articulo?cod_familia=4 for Frutas & Verduras
+   * Returns JSON with: descripcion, precios[0].precio_venta
+   */
+  async granvia(config, query) {
+    const results = [];
+
+    try {
+      // Use REST API to fetch category 4 (Frutas & Verduras)
+      const apiUrl = `${config.apiUrl}?cod_familia=${config.categoryId}&limit=200`;
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+      const response = await fetch(apiUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'application/json'
+        },
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        const products = data.data || [];
+
+        for (const product of products) {
+          const name = product.descripcion || '';
+          const priceData = product.precios && product.precios[0];
+          // Use offer price if available, otherwise regular price
+          const price = priceData ?
+            (priceData.is_oferta ? priceData.precio_oferta : priceData.precio_venta) : 0;
+
+          if (name && price > 0 && isFreshProduce(name)) {
+            // Avoid duplicates
+            if (!results.some(r => r.name === name)) {
+              const normalized = normalizePricePerKg(name, price);
+              results.push({
+                supermarket: config.name,
+                name: name.trim(),
+                price: normalized.price,
+                unit: detectUnit(name)
+              });
+            }
+          }
+        }
+      } else {
+        console.error(`[Aurelio] Gran Via API returned ${response.status}`);
+      }
+
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.error(`[Aurelio] Gran Via request timed out`);
       } else {
         console.error(`[Aurelio] Error scraping ${config.name}:`, error.message);
       }
