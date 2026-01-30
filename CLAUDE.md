@@ -109,21 +109,50 @@ HidroBio sells B2B at prices calculated as **% of market median** (supermarket c
 
 ## Supermarket Coverage
 
+### Active Scrapers (12 supermarkets)
+
 | Supermarket | Status | Method | Notes |
 |-------------|--------|--------|-------|
-| **Stock** | Active | Cheerio/Node.js | nopCommerce site |
-| **Superseis** | Active | Cheerio/Node.js | `data-product-id` attrs |
-| **Casa Rica** | Active | Cheerio/Node.js | Longer timeout |
-| **Biggie** | Active | REST API | Public API at `api.app.biggie.com.py` (added 2026-01-28) |
-| **Supermas** | Active | Cheerio/Node.js | PHP ecommerce, clean HTML (added 2026-01-28) |
-| **Real** | Active | GraphQL API | Instaleap API at `nextgentheadless.instaleap.io` (added 2026-01-28) |
-| **Areté** | Active | Cheerio/Node.js | MASCREATIVO ECOMMERCE PRO platform (added 2026-01-29) |
-| **San Cayetano** | Active | Cheerio/Node.js | MASCREATIVO platform, same as Areté (added 2026-01-29) |
-| **Casa Grütter** | Active | Cheerio/Node.js | WooCommerce site (added 2026-01-29) |
-| **Salemma** | ❌ Disabled | Cheerio/Node.js | Server redirect bug (www→non-www drops `/` from paths) |
-| **Pryca** | ❌ Disabled | - | Pegasus Ecommerce - products loaded via AJAX, needs Playwright |
-| **La Bomba** | ❌ Disabled | - | Pegasus Ecommerce - same as Pryca |
-| **Fortis** | ❌ Disabled | - | Rails + Turbo/Hotwire, needs Playwright |
+| **Stock** | ✅ Active | Cheerio | nopCommerce site |
+| **Superseis** | ✅ Active | Cheerio | `data-product-id` attrs |
+| **Casa Rica** | ✅ Active | Cheerio | Longer timeout |
+| **Biggie** | ✅ Active | REST API | Public API at `api.app.biggie.com.py` |
+| **Supermas** | ✅ Active | Cheerio | PHP ecommerce, clean HTML |
+| **Real** | ✅ Active | GraphQL API | Instaleap API at `nextgentheadless.instaleap.io` |
+| **Areté** | ✅ Active | Cheerio | MASCREATIVO ECOMMERCE PRO platform |
+| **San Cayetano** | ✅ Active | Cheerio | MASCREATIVO platform, same as Areté |
+| **Casa Grütter** | ✅ Active | Cheerio | WooCommerce site |
+| **Salemma** | ✅ Active | Cheerio | Laravel platform, redirect bug fixed (2026-01-30) |
+| **Los Jardines** | ✅ Active | Cheerio | MASCREATIVO platform, verduras-c57 category (2026-01-30) |
+| **Gran Via** | ✅ Active | REST API | VitalSoftware React SPA with public API (2026-01-30) |
+
+### Disabled Scrapers (need browser automation)
+
+| Supermarket | Issue | Tech Stack |
+|-------------|-------|------------|
+| **Pryca** | Products loaded via AJAX | Pegasus Ecommerce (PHP) |
+| **La Bomba** | Products loaded via AJAX | Pegasus Ecommerce |
+| **Fortis** | Site appears down (was Rails + Turbo) | Unknown |
+
+### Research Notes (Future Expansion)
+
+**Potential additions (need investigation):**
+- Megaredil - unconfirmed ecommerce
+- Delimarket - unconfirmed ecommerce
+- Río Supermarket - unconfirmed ecommerce
+
+**No ecommerce (skip):**
+- Fortis: Only processed foods in ecommerce, no fresh produce category
+- Pueblo, La Familia, La Rioja, Los Colonos, España, Carmelitas
+- Multimarket, Norte - no online presence found
+
+**Platform Reference:**
+- MASCREATIVO ECOMMERCE PRO: Areté, San Cayetano, Los Jardines (easy to scrape)
+- WooCommerce: Casa Rica, Casa Grütter
+- Pegasus Ecommerce: Pryca, La Bomba (needs Playwright)
+- Instaleap: Real (GraphQL API)
+- Custom: Stock (nopCommerce), Superseis, Salemma (Laravel)
+- VitalSoftware: Gran Via (React SPA + REST API)
 
 ## Environment Variables
 
@@ -350,4 +379,4 @@ The service runs both daemon and dashboard:
 
 ---
 
-*Last updated: January 29, 2026 (added Areté, San Cayetano, Casa Grütter scrapers)*
+*Last updated: January 30, 2026 (added Gran Via, Los Jardines, re-enabled Salemma - now 12 active supermarkets, 75 prices)*
