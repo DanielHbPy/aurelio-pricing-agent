@@ -233,20 +233,20 @@ const CONFIG = {
     },
     {
       name: 'Pryca',
-      enabled: false,  // Disabled - requires JavaScript execution (products loaded via AJAX)
+      enabled: true,  // Re-enabled 2026-01-30 - works with session cookie!
       baseUrl: 'https://www.pryca.com.py',
       // Category ID 12 = FRUTAS Y VERDURAS
-      categoryUrl: 'https://www.pryca.com.py/index.php?class=ViewProductList&method=onSearch&from_nivel1=true&nivel1_id=12',
+      categoryId: 12,
       scraper: 'pegasus',
-      notes: 'Pegasus Ecommerce - needs Playwright/Puppeteer (products loaded via AJAX)'
+      notes: 'Pegasus/Adianti - requires session cookie, then engine.php works'
     },
     {
       name: 'La Bomba',
-      enabled: false,  // Disabled initially - category may have different ID or no products
+      enabled: false,  // No fresh produce category - only processed foods in their ecommerce
       baseUrl: 'https://www.supermercadolabomba.com',
-      categoryUrl: 'https://www.supermercadolabomba.com/index.php?class=ViewProductList&method=onSearch&from_nivel1=true&nivel1_id=12',
+      categoryId: 12,
       scraper: 'pegasus',
-      notes: 'Pegasus Ecommerce - same as Pryca (verify category ID)'
+      notes: 'Pegasus/Adianti - no fruits/vegetables category available'
     },
     // === TIER 2 SUPERMARKETS (Added 2026-01-29) ===
     {
@@ -1450,29 +1450,65 @@ const SCRAPERS = {
 
   /**
    * Pegasus Ecommerce scraper (Pryca, La Bomba)
-   * Added 2026-01-29
+   * Added 2026-01-29, Fixed 2026-01-30
    * PHP-based platform using Adianti Framework
-   * Structure: Product cards with:
-   *   - heading for product name (e.g., "TOMATE SANTA CRUZ X KG*")
-   *   - "Ahora: Gs. XX.XXX" for current price
-   *   - "Antes: Gs. XX.XXX" for original price (if on sale)
-   *   - "OFERTA" badge for discounted items
+   * KEY INSIGHT: Requires session cookie! First fetch homepage, then engine.php
+   * Structure: Product cards with h5 for name, "Gs. XX.XXX" for price
    */
   async pegasus(config, query) {
     const results = [];
 
     try {
-      // Use category URL for frutas y verduras
-      const url = config.categoryUrl;
+      // STEP 1: Fetch homepage to get session cookie
+      const homeController = new AbortController();
+      const homeTimeout = setTimeout(() => homeController.abort(), 15000);
+
+      const homeResponse = await fetch(config.baseUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Accept': 'text/html'
+        },
+        signal: homeController.signal
+      });
+      clearTimeout(homeTimeout);
+
+      // Extract ALL session cookies from response
+      // Pryca uses both: controlsessid AND PHPSESSID_e_commerce_frontend
+      const setCookieHeader = homeResponse.headers.getSetCookie ?
+        homeResponse.headers.getSetCookie() :
+        [homeResponse.headers.get('set-cookie')].filter(Boolean);
+
+      const cookiePairs = [];
+      for (const cookie of setCookieHeader) {
+        if (!cookie) continue;
+        // Handle comma-separated cookies in single header
+        const parts = cookie.split(/,(?=[^;]*=)/);
+        for (const part of parts) {
+          const match = part.match(/^([^=]+)=([^;]+)/);
+          if (match) {
+            cookiePairs.push(`${match[1].trim()}=${match[2].trim()}`);
+          }
+        }
+      }
+      const sessionCookie = cookiePairs.join('; ');
+
+      if (!sessionCookie) {
+        console.error(`[Aurelio] ${config.name}: No session cookie received`);
+        return results;
+      }
+
+      // STEP 2: Fetch category via engine.php with session cookie
+      const categoryUrl = `${config.baseUrl}/engine.php?class=ViewProductList&method=onSearch&from_nivel1=true&nivel1_id=${config.categoryId}&first_page=1`;
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-      const response = await fetch(url, {
+      const response = await fetch(categoryUrl, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'es-PY,es;q=0.9,en;q=0.8'
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Accept': 'text/html',
+          'Cookie': sessionCookie,
+          'X-Requested-With': 'XMLHttpRequest'
         },
         signal: controller.signal
       });
@@ -1482,119 +1518,55 @@ const SCRAPERS = {
       const html = await response.text();
       const $ = cheerio.load(html);
 
-      const queryLower = query.toLowerCase();
+      // Parse product cards - structure: h5 for name, "Gs. XX.XXX" for price
+      $('.panel.card, .card-item, div.product').each((_, el) => {
+        const $el = $(el);
 
-      // Pegasus uses card-based layout
-      // Look for product containers with price information
-      // Pattern from screenshot: "TOMATE SANTA CRUZ X KG*" + "Ahora: Gs. 11.830 x Kg."
+        // Get product name from h5
+        const name = $el.find('h5').first().text().trim();
+        if (!name) return;
 
-      // Method 1: Find by "Ahora:" price pattern
-      $('*').filter((_, el) => {
-        const text = $(el).text();
-        return text.includes('Ahora:') && text.includes('Gs.');
-      }).each((_, el) => {
-        const $container = $(el).closest('.card, .product-card, .col-md-3, .col-lg-3, .col-6, [class*="product"]');
-        if ($container.length === 0) return;
-
-        // Get product name from heading
-        let name = $container.find('h1, h2, h3, h4, h5, h6').first().text().trim();
-        if (!name) {
-          name = $container.find('.product-name, .title, strong').first().text().trim();
-        }
-
-        // Get current price from "Ahora: Gs. XX.XXX"
-        const containerText = $container.text();
-        const ahoraMatch = containerText.match(/Ahora:\s*Gs\.?\s*([\d.,]+)/i);
-        const price = ahoraMatch ? extractPrice(ahoraMatch[1]) : 0;
+        // Get price - format: "Gs. 16.900" or "Gs. 16.900 x Kg."
+        const text = $el.text();
+        const priceMatch = text.match(/Gs\.?\s*([\d.,]+)/);
+        const price = priceMatch ? extractPrice(priceMatch[1]) : 0;
 
         if (name && price && isFreshProduce(name)) {
-          // Check if matches query
-          const nameLower = name.toLowerCase();
-          const queryFirstWord = queryLower.split(' ')[0];
+          if (!results.some(r => r.name === name)) {
+            const normalized = normalizePricePerKg(name, price);
+            results.push({
+              supermarket: config.name,
+              name: name.trim(),
+              price: normalized.price,
+              unit: detectUnit(name)
+            });
+          }
+        }
+      });
 
-          if (nameLower.includes(queryFirstWord)) {
+      // Fallback: parse h5 + price pairs directly from HTML
+      if (results.length === 0) {
+        const h5Matches = html.match(/<h5>([^<]+)<\/h5>/g) || [];
+        const priceMatches = html.match(/Gs\.?\s*([\d.,]+)/g) || [];
+
+        // Products usually come in pairs: h5 followed by price
+        for (let i = 0; i < h5Matches.length && i < priceMatches.length; i++) {
+          const nameMatch = h5Matches[i].match(/<h5>([^<]+)<\/h5>/);
+          const name = nameMatch ? nameMatch[1].trim() : '';
+          const price = extractPrice(priceMatches[i]);
+
+          if (name && price && isFreshProduce(name)) {
             if (!results.some(r => r.name === name)) {
               const normalized = normalizePricePerKg(name, price);
               results.push({
                 supermarket: config.name,
-                name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
+                name: name.trim(),
                 price: normalized.price,
                 unit: detectUnit(name)
               });
             }
           }
         }
-      });
-
-      // Method 2: Try common product card selectors
-      if (results.length === 0) {
-        $('.product-card, .card, [class*="producto"]').each((_, el) => {
-          const $el = $(el);
-          const text = $el.text();
-
-          // Must have price indicator
-          if (!text.includes('Gs.') && !text.includes('Gs ')) return;
-
-          let name = $el.find('h1, h2, h3, h4, h5, h6, .product-name, .title').first().text().trim();
-
-          // Extract price - prefer "Ahora" price, fallback to first Gs. match
-          let priceMatch = text.match(/Ahora:\s*Gs\.?\s*([\d.,]+)/i);
-          if (!priceMatch) {
-            priceMatch = text.match(/Gs\.?\s*([\d.,]+)/);
-          }
-          const price = priceMatch ? extractPrice(priceMatch[1]) : 0;
-
-          if (name && price && isFreshProduce(name)) {
-            const nameLower = name.toLowerCase();
-            const queryFirstWord = queryLower.split(' ')[0];
-
-            if (nameLower.includes(queryFirstWord)) {
-              if (!results.some(r => r.name === name)) {
-                const normalized = normalizePricePerKg(name, price);
-                results.push({
-                  supermarket: config.name,
-                  name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
-                  price: normalized.price,
-                  unit: detectUnit(name)
-                });
-              }
-            }
-          }
-        });
-      }
-
-      // Method 3: Parse all headings and look for price siblings
-      if (results.length === 0) {
-        $('h5, h6').each((_, el) => {
-          const $heading = $(el);
-          const name = $heading.text().trim();
-
-          if (!name || !isFreshProduce(name)) return;
-
-          // Look for price in parent container
-          const $parent = $heading.parent().parent();
-          const parentText = $parent.text();
-
-          const priceMatch = parentText.match(/Gs\.?\s*([\d.,]+)/);
-          const price = priceMatch ? extractPrice(priceMatch[1]) : 0;
-
-          if (price > 0) {
-            const nameLower = name.toLowerCase();
-            const queryFirstWord = queryLower.split(' ')[0];
-
-            if (nameLower.includes(queryFirstWord)) {
-              if (!results.some(r => r.name === name)) {
-                const normalized = normalizePricePerKg(name, price);
-                results.push({
-                  supermarket: config.name,
-                  name: normalized.normalized ? `${name.trim()} [→${normalized.packageSize}→kg]` : name.trim(),
-                  price: normalized.price,
-                  unit: detectUnit(name)
-                });
-              }
-            }
-          }
-        });
       }
 
     } catch (error) {
