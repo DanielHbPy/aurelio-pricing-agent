@@ -109,7 +109,7 @@ HidroBio sells B2B at prices calculated as **% of market median** (supermarket c
 
 ## Supermarket Coverage
 
-### Active Scrapers (12 supermarkets)
+### Active Scrapers (13 supermarkets)
 
 | Supermarket | Status | Method | Notes |
 |-------------|--------|--------|-------|
@@ -125,14 +125,14 @@ HidroBio sells B2B at prices calculated as **% of market median** (supermarket c
 | **Salemma** | ✅ Active | Cheerio | Laravel platform, redirect bug fixed (2026-01-30) |
 | **Los Jardines** | ✅ Active | Cheerio | MASCREATIVO platform, verduras-c57 category (2026-01-30) |
 | **Gran Via** | ✅ Active | REST API | VitalSoftware React SPA with public API (2026-01-30) |
+| **Pryca** | ✅ Active | Cheerio + Session | Pegasus/Adianti - session cookie required (2026-01-30) |
 
-### Disabled Scrapers (need browser automation)
+### Disabled Scrapers
 
 | Supermarket | Issue | Tech Stack |
 |-------------|-------|------------|
-| **Pryca** | Products loaded via AJAX | Pegasus Ecommerce (PHP) |
-| **La Bomba** | Products loaded via AJAX | Pegasus Ecommerce |
-| **Fortis** | Site appears down (was Rails + Turbo) | Unknown |
+| **La Bomba** | No fresh produce category | Pegasus Ecommerce (only processed foods) |
+| **Fortis** | Site appears down | Unknown (was Rails + Turbo) |
 
 ### Research Notes (Future Expansion)
 
@@ -149,7 +149,7 @@ HidroBio sells B2B at prices calculated as **% of market median** (supermarket c
 **Platform Reference:**
 - MASCREATIVO ECOMMERCE PRO: Areté, San Cayetano, Los Jardines (easy to scrape)
 - WooCommerce: Casa Rica, Casa Grütter
-- Pegasus Ecommerce: Pryca, La Bomba (needs Playwright)
+- Pegasus Ecommerce: Pryca (session cookie method), La Bomba (no produce)
 - Instaleap: Real (GraphQL API)
 - Custom: Stock (nopCommerce), Superseis, Salemma (Laravel)
 - VitalSoftware: Gran Via (React SPA + REST API)
@@ -379,4 +379,4 @@ The service runs both daemon and dashboard:
 
 ---
 
-*Last updated: January 30, 2026 (added Gran Via, Los Jardines, re-enabled Salemma - now 12 active supermarkets, 75 prices)*
+*Last updated: January 30, 2026 (added Pryca with session cookie handling, Gran Via, Los Jardines, re-enabled Salemma - now 13 active supermarkets, 76 prices)*
