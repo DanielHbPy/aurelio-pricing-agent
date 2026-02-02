@@ -2841,7 +2841,7 @@ TAREA:
     console.log('[Aurelio] Iniciando análisis con Claude...');
 
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-5-20251101',
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 8192,
       messages: [
         { role: 'user', content: userPrompt }
