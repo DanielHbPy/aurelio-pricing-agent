@@ -3780,11 +3780,16 @@ async function runScrapingOnly() {
     console.log('[Aurelio] ☁️ Sincronizando con Zoho Analytics...');
     await syncToZohoAnalytics(db);
 
-    // Alert if errors occurred
+    // Count supermarkets scraped
+    const supermarketsScraped = CONFIG.supermarkets.filter(s => s.enabled).length;
+
+    // Send success email (always, with error count if any)
+    await sendSuccessEmail(allPrices.length, supermarketsScraped, errorCount);
+
+    // Also log warning if errors occurred
     if (errorCount > 0) {
       console.log(`[Aurelio] ⚠️ ${errorCount} errores durante recolección`);
       db.saveAlert('scraping', `${errorCount} errores durante recolección diaria`, 'warning');
-      await sendErrorAlert(errorCount, allPrices.length);
     }
 
     console.log(`\n[Aurelio] ✅ Recolección diaria completada (${allPrices.length} precios)\n`);
@@ -3838,6 +3843,87 @@ async function sendErrorAlert(errorCount, pricesCollected, criticalError = null)
     console.log('[Aurelio] 📧 Alerta enviada por email');
   } catch (error) {
     console.error('[Aurelio] ❌ Error enviando alerta:', error.message);
+  }
+}
+
+/**
+ * Send success notification email after daily scrape
+ */
+async function sendSuccessEmail(pricesCollected, supermarketsScraped, errorCount = 0) {
+  const credentials = loadZohoCredentials();
+  if (!credentials.ZOHO_SMTP_USER || !credentials.ZOHO_SMTP_PASSWORD) {
+    console.log('[Aurelio] ⚠️ No SMTP credentials - skipping success email');
+    return;
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: 'smtp.zoho.com',
+    port: 465,
+    secure: true,
+    auth: { user: credentials.ZOHO_SMTP_USER, password: credentials.ZOHO_SMTP_PASSWORD }
+  });
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('es-PY', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = now.toLocaleTimeString('es-PY', { hour: '2-digit', minute: '2-digit' });
+
+  const statusEmoji = errorCount === 0 ? '✅' : '⚠️';
+  const subject = `${statusEmoji} [Aurelio] Recolección Diaria - ${pricesCollected} precios - ${now.toLocaleDateString('es-PY')}`;
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; padding: 20px; max-width: 600px;">
+      <div style="background: linear-gradient(135deg, #2e7d32 0%, #4caf50 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0;">
+        <h2 style="margin: 0;">🌿 Aurelio - Recolección Diaria</h2>
+        <p style="margin: 5px 0 0 0; opacity: 0.9;">${dateStr} - ${timeStr}</p>
+      </div>
+
+      <div style="background: #f5f5f5; padding: 20px; border-radius: 0 0 8px 8px;">
+        <div style="background: white; padding: 15px; border-radius: 8px; margin-bottom: 15px;">
+          <h3 style="margin: 0 0 10px 0; color: #333;">📊 Resumen de Ejecución</h3>
+          <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+              <td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>Precios recolectados:</strong></td>
+              <td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right; font-size: 18px; color: #2e7d32;"><strong>${pricesCollected}</strong></td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0; border-bottom: 1px solid #eee;"><strong>Supermercados escaneados:</strong></td>
+              <td style="padding: 8px 0; border-bottom: 1px solid #eee; text-align: right;">${supermarketsScraped}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px 0;"><strong>Errores:</strong></td>
+              <td style="padding: 8px 0; text-align: right; color: ${errorCount > 0 ? '#f44336' : '#4caf50'};">${errorCount}</td>
+            </tr>
+          </table>
+        </div>
+
+        ${errorCount > 0 ? `
+        <div style="background: #fff3e0; padding: 15px; border-radius: 8px; border-left: 4px solid #ff9800;">
+          <p style="margin: 0; color: #e65100;">⚠️ Hubo ${errorCount} error(es) durante la recolección. Revisa los logs para más detalles.</p>
+        </div>
+        ` : `
+        <div style="background: #e8f5e9; padding: 15px; border-radius: 8px; border-left: 4px solid #4caf50;">
+          <p style="margin: 0; color: #2e7d32;">✅ Recolección completada sin errores.</p>
+        </div>
+        `}
+      </div>
+
+      <p style="color: #666; font-size: 12px; text-align: center; margin-top: 20px;">
+        Aurelio - Inteligencia de Precios | HidroBio S.A.<br>
+        <a href="https://aurelio-pricing.up.railway.app" style="color: #2e7d32;">Ver Dashboard</a>
+      </p>
+    </div>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `"Aurelio - HidroBio" <${credentials.EMAIL_FROM || credentials.ZOHO_SMTP_USER}>`,
+      to: credentials.EMAIL_TO || 'daniel@hidrobio.com.py',
+      subject,
+      html
+    });
+    console.log('[Aurelio] 📧 Email de éxito enviado');
+  } catch (error) {
+    console.error('[Aurelio] ❌ Error enviando email de éxito:', error.message);
   }
 }
 
