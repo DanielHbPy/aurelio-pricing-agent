@@ -283,6 +283,157 @@ async function getTodayPrices() {
   }
 }
 
+/**
+ * Get wholesale (mayorista) prices - from SIMA/DAMA via WhatsApp watcher
+ * These are stored with supermarket names like "Mayorista: DAMA ASU"
+ */
+async function getWholesalePrices() {
+  const db = await loadDatabase();
+  if (!db) return [];
+
+  try {
+    // Get prices from the last 7 days for wholesale sources
+    return db.prepare(`
+      SELECT * FROM prices
+      WHERE supermarket LIKE 'Mayorista:%'
+      ORDER BY date DESC, supermarket, product
+    `).all();
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Get latest wholesale prices (one per product/market)
+ */
+async function getLatestWholesalePrices() {
+  const db = await loadDatabase();
+  if (!db) return [];
+
+  try {
+    // Get the most recent price for each product from each wholesale market
+    return db.prepare(`
+      SELECT p.* FROM prices p
+      INNER JOIN (
+        SELECT product, supermarket, MAX(date) as max_date
+        FROM prices
+        WHERE supermarket LIKE 'Mayorista:%'
+        GROUP BY product, supermarket
+      ) latest ON p.product = latest.product
+        AND p.supermarket = latest.supermarket
+        AND p.date = latest.max_date
+      ORDER BY p.product, p.supermarket
+    `).all();
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Get price comparison: wholesale vs retail for each product
+ */
+async function getPriceComparison() {
+  const db = await loadDatabase();
+  if (!db) return { wholesale: [], retail: [], comparison: [] };
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // Get latest wholesale prices
+    const wholesale = db.prepare(`
+      SELECT p.product, p.supermarket, p.price_guaranies, p.unit, p.date, p.product_name_raw
+      FROM prices p
+      INNER JOIN (
+        SELECT product, supermarket, MAX(date) as max_date
+        FROM prices
+        WHERE supermarket LIKE 'Mayorista:%'
+        GROUP BY product, supermarket
+      ) latest ON p.product = latest.product
+        AND p.supermarket = latest.supermarket
+        AND p.date = latest.max_date
+      ORDER BY p.product
+    `).all();
+
+    // Get today's retail prices (non-wholesale)
+    const retail = db.prepare(`
+      SELECT product, supermarket, price_guaranies, unit, date, product_name_raw
+      FROM prices
+      WHERE date = ? AND supermarket NOT LIKE 'Mayorista:%'
+      ORDER BY product, supermarket
+    `).all(today);
+
+    // Build comparison by product
+    const wholesaleByProduct = {};
+    wholesale.forEach(p => {
+      if (!wholesaleByProduct[p.product]) {
+        wholesaleByProduct[p.product] = [];
+      }
+      wholesaleByProduct[p.product].push(p);
+    });
+
+    const retailByProduct = {};
+    retail.forEach(p => {
+      if (!retailByProduct[p.product]) {
+        retailByProduct[p.product] = [];
+      }
+      retailByProduct[p.product].push(p);
+    });
+
+    const comparison = [];
+    const allProducts = new Set([...Object.keys(wholesaleByProduct), ...Object.keys(retailByProduct)]);
+
+    for (const product of allProducts) {
+      const wholesalePrices = wholesaleByProduct[product] || [];
+      const retailPrices = retailByProduct[product] || [];
+
+      // Calculate wholesale average (lowest market prices)
+      const wholesaleAvg = wholesalePrices.length > 0
+        ? Math.round(wholesalePrices.reduce((sum, p) => sum + p.price_guaranies, 0) / wholesalePrices.length)
+        : null;
+
+      // Calculate retail median
+      let retailMedian = null;
+      if (retailPrices.length > 0) {
+        const sorted = retailPrices.map(p => p.price_guaranies).sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        retailMedian = sorted.length % 2 !== 0 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+      }
+
+      // Calculate markup percentage
+      let markupPct = null;
+      if (wholesaleAvg && retailMedian) {
+        markupPct = Math.round(((retailMedian - wholesaleAvg) / wholesaleAvg) * 100);
+      }
+
+      comparison.push({
+        product,
+        wholesaleAvg,
+        wholesaleMin: wholesalePrices.length > 0 ? Math.min(...wholesalePrices.map(p => p.price_guaranies)) : null,
+        wholesaleMax: wholesalePrices.length > 0 ? Math.max(...wholesalePrices.map(p => p.price_guaranies)) : null,
+        wholesaleSources: wholesalePrices.map(p => ({
+          market: p.supermarket.replace('Mayorista: ', ''),
+          price: p.price_guaranies,
+          date: p.date
+        })),
+        retailMedian,
+        retailMin: retailPrices.length > 0 ? Math.min(...retailPrices.map(p => p.price_guaranies)) : null,
+        retailMax: retailPrices.length > 0 ? Math.max(...retailPrices.map(p => p.price_guaranies)) : null,
+        retailCount: retailPrices.length,
+        markupPct,
+        unit: wholesalePrices[0]?.unit || retailPrices[0]?.unit || 'kg'
+      });
+    }
+
+    return {
+      wholesale,
+      retail,
+      comparison: comparison.sort((a, b) => a.product.localeCompare(b.product))
+    };
+  } finally {
+    db.close();
+  }
+}
+
 async function getLatestAnalysis() {
   const db = await loadDatabase();
   if (!db) return null;
@@ -351,6 +502,13 @@ async function getSystemStatus() {
       GROUP BY date ORDER BY date DESC LIMIT 1
     `).get();
 
+    // Get actual timestamp of most recent price entry
+    const latestTimestamp = db.prepare(`
+      SELECT created_at FROM prices
+      WHERE date = ?
+      ORDER BY created_at DESC LIMIT 1
+    `).get(latestPrice?.date || '');
+
     const supermarkets = db.prepare(`
       SELECT DISTINCT supermarket FROM prices WHERE date = ?
     `).all(latestPrice?.date || '');
@@ -359,9 +517,26 @@ async function getSystemStatus() {
       SELECT DISTINCT product FROM prices WHERE date = ?
     `).all(latestPrice?.date || '');
 
+    // Format last run time in Paraguay timezone (UTC-4 / UTC-3 DST)
+    let lastRunPYT = null;
+    if (latestTimestamp?.created_at) {
+      const utcDate = new Date(latestTimestamp.created_at + 'Z');
+      lastRunPYT = utcDate.toLocaleString('es-PY', {
+        timeZone: 'America/Asuncion',
+        weekday: 'short',
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+
     return {
       status: 'operational',
       lastScrape: latestPrice?.date || null,
+      lastScrapeTimestamp: latestTimestamp?.created_at || null,
+      lastRunPYT: lastRunPYT,
       pricesCollected: latestPrice?.count || 0,
       supermarketsCount: supermarkets.length,
       productsCount: products.length,
@@ -537,6 +712,20 @@ async function handleApiPricesToday(req, res, session) {
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: true, prices }));
+  } catch (error) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: false, error: error.message }));
+  }
+}
+
+async function handleApiWholesalePrices(req, res, session) {
+  try {
+    const comparison = await getPriceComparison();
+
+    console.log(`[Dashboard] ${session.email} fetched wholesale price comparison`);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ success: true, ...comparison }));
   } catch (error) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ success: false, error: error.message }));
@@ -873,6 +1062,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/prices/today') {
       return handleApiPricesToday(req, res, session);
+    }
+    if (pathname === '/api/prices/wholesale') {
+      return handleApiWholesalePrices(req, res, session);
     }
     if (pathname === '/api/status') {
       return handleApiStatus(req, res, session);

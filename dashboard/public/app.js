@@ -43,6 +43,8 @@ const elements = {
   recommendationSection: document.getElementById('recommendation-section'),
   recommendationText: document.getElementById('recommendation-text'),
   rawPricesContainer: document.getElementById('raw-prices-container'),
+  wholesaleSection: document.getElementById('wholesale-section'),
+  wholesaleContainer: document.getElementById('wholesale-container'),
   footerTimestamp: document.getElementById('footer-timestamp')
 };
 
@@ -77,6 +79,9 @@ async function init() {
   // Load data
   await loadReport();
 
+  // Load wholesale comparison
+  await loadWholesaleComparison();
+
   // Update timestamp
   updateFooterTimestamp();
   setInterval(updateFooterTimestamp, 60000);
@@ -105,9 +110,13 @@ async function loadReport() {
 function renderDashboard() {
   const { analysis, prices, alerts, status } = reportData;
 
-  // Update report date
-  const reportDate = analysis?.date || status?.lastScrape || new Date().toISOString().split('T')[0];
-  elements.reportDate.textContent = formatDate(reportDate);
+  // Update report date - show last run time in Paraguay time if available
+  if (status?.lastRunPYT) {
+    elements.reportDate.textContent = `Última actualización: ${status.lastRunPYT}`;
+  } else {
+    const reportDate = analysis?.date || status?.lastScrape || new Date().toISOString().split('T')[0];
+    elements.reportDate.textContent = formatDate(reportDate);
+  }
 
   // Update stats
   elements.statPrices.textContent = status?.pricesCollected || prices?.length || '--';
@@ -492,6 +501,124 @@ function renderAlerts(alerts) {
 
   // Append to existing alerts (from AI analysis) instead of replacing
   elements.alertsContainer.innerHTML += alertsHtml;
+}
+
+// Load wholesale price comparison
+async function loadWholesaleComparison() {
+  try {
+    const response = await fetch('/api/prices/wholesale');
+    const result = await response.json();
+
+    if (!result.success) {
+      throw new Error(result.error);
+    }
+
+    renderWholesaleComparison(result.comparison, result.wholesale);
+  } catch (error) {
+    console.error('Error loading wholesale prices:', error);
+    if (elements.wholesaleContainer) {
+      elements.wholesaleContainer.innerHTML = '<p class="loading-placeholder">No hay precios mayoristas disponibles.</p>';
+    }
+  }
+}
+
+// Render wholesale vs retail comparison
+function renderWholesaleComparison(comparison, wholesale) {
+  if (!elements.wholesaleContainer) return;
+
+  if (!comparison || comparison.length === 0) {
+    elements.wholesaleContainer.innerHTML = `
+      <div class="wholesale-empty">
+        <p>📊 No hay precios mayoristas registrados aún.</p>
+        <p class="wholesale-hint">Los precios del mercado DAMA y otros mayoristas se obtienen automáticamente de los documentos SIMA compartidos en WhatsApp.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Filter to only show products that have wholesale data
+  const productsWithWholesale = comparison.filter(c => c.wholesaleAvg !== null);
+
+  if (productsWithWholesale.length === 0) {
+    elements.wholesaleContainer.innerHTML = `
+      <div class="wholesale-empty">
+        <p>📊 No hay precios mayoristas para los productos monitoreados.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // Create comparison cards
+  const cardsHtml = productsWithWholesale.map(item => {
+    const hasRetail = item.retailMedian !== null;
+    const markupClass = item.markupPct > 100 ? 'high' : item.markupPct > 50 ? 'medium' : 'low';
+
+    // Format wholesale sources
+    const sourcesHtml = item.wholesaleSources.map(s => `
+      <span class="wholesale-source">
+        <span class="source-name">${s.market}</span>
+        <span class="source-price">Gs. ${formatNumber(s.price)}</span>
+      </span>
+    `).join('');
+
+    return `
+      <div class="wholesale-card">
+        <div class="wholesale-card-header">
+          <h4>🥬 ${item.product}</h4>
+          <span class="wholesale-unit">por ${item.unit}</span>
+        </div>
+        <div class="wholesale-card-body">
+          <div class="price-comparison-grid">
+            <div class="price-column wholesale">
+              <div class="price-column-header">📦 Mayorista</div>
+              <div class="price-main">Gs. ${formatNumber(item.wholesaleAvg)}</div>
+              <div class="price-range">
+                ${item.wholesaleMin !== item.wholesaleMax
+                  ? `Gs. ${formatNumber(item.wholesaleMin)} - ${formatNumber(item.wholesaleMax)}`
+                  : 'Precio único'}
+              </div>
+              <div class="wholesale-sources">${sourcesHtml}</div>
+            </div>
+
+            <div class="price-column arrow">
+              ${hasRetail ? `
+                <div class="markup-arrow ${markupClass}">
+                  <span class="arrow-icon">→</span>
+                  <span class="markup-pct">+${item.markupPct}%</span>
+                </div>
+              ` : '<span class="no-data">—</span>'}
+            </div>
+
+            <div class="price-column retail">
+              <div class="price-column-header">🏪 Supermercado</div>
+              ${hasRetail ? `
+                <div class="price-main">Gs. ${formatNumber(item.retailMedian)}</div>
+                <div class="price-range">
+                  Gs. ${formatNumber(item.retailMin)} - ${formatNumber(item.retailMax)}
+                </div>
+                <div class="retail-count">${item.retailCount} precios hoy</div>
+              ` : `
+                <div class="price-main no-data">Sin datos hoy</div>
+                <div class="price-range">Ejecutar análisis</div>
+              `}
+            </div>
+          </div>
+
+          ${hasRetail && item.markupPct !== null ? `
+            <div class="margin-insight ${markupClass}">
+              ${item.markupPct > 100
+                ? `⚠️ Margen muy alto (${item.markupPct}%). Oportunidad de posicionamiento competitivo.`
+                : item.markupPct > 50
+                ? `📊 Margen moderado (${item.markupPct}%). Hay espacio para pricing B2B atractivo.`
+                : `✅ Margen bajo (${item.markupPct}%). Mercado mayorista cercano al retail.`}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  elements.wholesaleContainer.innerHTML = cardsHtml;
 }
 
 function renderRawPrices(prices) {

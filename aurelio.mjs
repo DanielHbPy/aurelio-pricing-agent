@@ -61,7 +61,7 @@ const CONFIG = {
       // Exclude Santa Cruz (that's Perita) and Cherry
       excludeTerms: ['santa cruz', 'cherry', 'perita', 'pera'],
       unit: 'kg',
-      hidrobioCost: 6926,  // Gs. per kg (from calculator)
+      hidrobioCost: 7000,  // Gs. per kg (updated 2026-02-05)
       hidrobioPisoAbsoluto: 8500,  // Floor price - never sell below
       marketMedianRef: 14950,  // Reference median from supermarkets
       hidrobioMinMargin: 0.25  // 25% minimum margin
@@ -73,7 +73,7 @@ const CONFIG = {
       // Exclude Lisa and Cherry
       excludeTerms: ['lisa', 'holandes', 'holandés', 'cherry'],
       unit: 'kg',
-      hidrobioCost: 6926,
+      hidrobioCost: 7000,  // Gs. per kg (updated 2026-02-05)
       hidrobioPisoAbsoluto: 8500,
       marketMedianRef: 6950,
       hidrobioMinMargin: 0.25
@@ -85,8 +85,8 @@ const CONFIG = {
       // Exclude other tomato types AND non-food items
       excludeTerms: ['lisa', 'santa cruz', 'perita', 'holandes', 'caramelo', 'candy', 'halls', 'mentho', 'deo', 'axe', 'spray', 'bodyspra', 'desodorante'],
       unit: 'kg',
-      hidrobioCost: 10000,  // Per kg
-      hidrobioPisoAbsoluto: 12000,
+      hidrobioCost: 7000,  // Gs. per kg (updated 2026-02-05 - was 10000)
+      hidrobioPisoAbsoluto: 8500,  // Updated floor to match tomato line
       marketMedianRef: 18000,
       hidrobioMinMargin: 0.25
     },
@@ -95,7 +95,7 @@ const CONFIG = {
       searchTerms: ['locote rojo', 'pimiento rojo', 'morron rojo'],
       excludeTerms: ['amarillo', 'verde'],
       unit: 'kg',
-      hidrobioCost: 12114,
+      hidrobioCost: 12000,  // Gs. per kg (updated 2026-02-05)
       hidrobioPisoAbsoluto: 15000,
       marketMedianRef: 26900,
       hidrobioMinMargin: 0.25
@@ -105,7 +105,7 @@ const CONFIG = {
       searchTerms: ['locote amarillo', 'pimiento amarillo', 'morron amarillo'],
       excludeTerms: ['rojo', 'verde'],
       unit: 'kg',
-      hidrobioCost: 12114,
+      hidrobioCost: 12000,  // Gs. per kg (updated 2026-02-05)
       hidrobioPisoAbsoluto: 15000,
       marketMedianRef: 47900,
       hidrobioMinMargin: 0.25
@@ -2140,16 +2140,16 @@ async function getWeeklySalesPrices() {
     const accessToken = await getZohoAccessToken(credentials);
     const orgId = credentials.ZOHO_ORG_ID || '862876482';
 
-    // Calculate date range (last 7 days)
+    // Calculate date range (last 14 days)
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 7);
+    startDate.setDate(startDate.getDate() - 14);
 
     const formatDate = (d) => d.toISOString().split('T')[0];
     const startDateStr = formatDate(startDate);
     const endDateStr = formatDate(endDate);
 
-    // Query invoices from last 7 days
+    // Query invoices from last 14 days
     // Zoho Books API: use date_start and date_end parameters, status as separate param
     const invoicesUrl = `https://www.zohoapis.com/books/v3/invoices?organization_id=${orgId}&date_start=${startDateStr}&date_end=${endDateStr}&status=sent&sort_column=date&sort_order=D&per_page=100`;
 

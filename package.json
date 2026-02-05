@@ -14,6 +14,7 @@
     "intro": "node aurelio.mjs --intro",
     "daily-report": "node aurelio.mjs --daily-report",
     "weekly-report": "node aurelio.mjs --weekly-report",
+    "watch-whatsapp": "node scrapers/whatsapp-sima-watcher.mjs",
     "test": "node aurelio.mjs --now"
   },
   "keywords": [
